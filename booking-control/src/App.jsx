@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { loadState, saveState, subscribeToChanges, supabase } from "./lib/db.js";
 
-const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000;
+const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
 const ST={
   Solicitado:{c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A",i:"⏳"},
@@ -42,7 +42,7 @@ const isEsc=r=>(r.status==="Solicitado"||r.status==="Precisando de estratégia")
 const isUrg=r=>!!r.isUrgent;
 const slaR=r=>(r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente")?null:SLA_MS-(Date.now()-r.createdAt);
 const isExp=r=>r.status==="Aprovado"&&(Date.now()-r.updatedAt)>THREE_DAYS;
-const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>FIVE_DAYS;
+const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>TWO_DAYS;
 const isTrashed=r=>!!r.deletedAt;
 const isTrashExp=r=>r.deletedAt&&(Date.now()-r.deletedAt)>FIVE_DAYS;
 const dUntil=d=>{if(!d)return null;return Math.ceil((new Date(d).getTime()-Date.now())/86400000)};
@@ -220,7 +220,12 @@ function BookingDetail({req,onClose,onChangeStatus,onUpdate,onDelete,user}){
       {(req.observations||[]).map((o,i)=><div key={i} style={{padding:"6px 10px",borderRadius:6,background:"#FFFBEB",border:"1px solid #FEF3C7",marginBottom:3}}><p style={{fontSize:12}}>{o.text}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:1}}>{o.by} · {fDt(o.at)}</p></div>)}
       <div style={{display:"flex",gap:6}}><input value={obsText} onChange={e=>setObsText(e.target.value)} placeholder="Observação..." style={{...iS,flex:1}} onKeyDown={e=>{if(e.key==="Enter")addObs()}}/><button onClick={addObs} style={{...bP,padding:"8px 14px",fontSize:11}}>Enviar</button></div>
     </div>
-    {req.status!=="Aprovado"&&req.status!=="Cancelado"&&req.status!=="Enviado ao cliente"&&<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{Object.keys(ST).filter(s=>s!==req.status).map(s=><button key={s} onClick={()=>onChangeStatus(req.id,s)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${ST[s].bd}`,background:ST[s].bg,color:ST[s].c,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{ST[s].i} {s}</button>)}</div>}
+    {req.status!=="Cancelado"&&req.status!=="Enviado ao cliente"&&<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+      {req.status==="Aprovado"
+        ?<button onClick={()=>onChangeStatus(req.id,"Enviado ao cliente")} style={{padding:"6px 14px",borderRadius:6,border:"1px solid #BAE6FD",background:"#E0F2FE",color:"#0369A1",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>📤 Enviar ao Cliente</button>
+        :Object.keys(ST).filter(s=>s!==req.status).map(s=><button key={s} onClick={()=>onChangeStatus(req.id,s)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${ST[s].bd}`,background:ST[s].bg,color:ST[s].c,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{ST[s].i} {s}</button>)
+      }
+    </div>}
     <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid #F1F5F9",display:"flex",justifyContent:"flex-end"}}>
       <button onClick={()=>{if(window.confirm("Mover este processo para a lixeira?"))onDelete(req.id)}} style={{padding:"6px 14px",borderRadius:6,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>🗑 Excluir Processo</button>
     </div>
