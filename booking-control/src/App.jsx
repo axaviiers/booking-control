@@ -598,28 +598,24 @@ export default function App(){
     setLoaded(true);
   })()},[applyState]);
 
-  const saveTimer=useRef(null);
   const lastLocalChange=useRef(0);
 
-  // SAVE on any change — debounced 300ms
+  // SAVE on any change — immediate
   useEffect(()=>{
     if(!loaded)return;
     lastLocalChange.current=Date.now();
     const state={bookings,pendencias,ships,users,armadores,logo};
     try{localStorage.setItem("booking-control-data",JSON.stringify(state))}catch{}
     if(supabase&&user){
-      clearTimeout(saveTimer.current);
-      saveTimer.current=setTimeout(()=>{
-        saveState(state,user.name);
-      },300);
+      saveState(state,user.name);
     }
   },[bookings,pendencias,ships,users,armadores,logo,loaded]);
 
-  // REALTIME subscription — ignore updates within 2s of local change
+  // REALTIME subscription — ignore updates within 3s of local change
   useEffect(()=>{
     if(!supabase)return;
     const unsub=subscribeToChanges((newData)=>{
-      if(Date.now()-lastLocalChange.current>2000){
+      if(Date.now()-lastLocalChange.current>3000){
         applyState(newData);
       }
     });
