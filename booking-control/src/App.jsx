@@ -599,27 +599,29 @@ export default function App(){
   })()},[applyState]);
 
   const saveTimer=useRef(null);
+  const lastLocalChange=useRef(0);
 
-  // SAVE on any change — debounced 500ms
+  // SAVE on any change — debounced 300ms
   useEffect(()=>{
     if(!loaded)return;
+    lastLocalChange.current=Date.now();
     const state={bookings,pendencias,ships,users,armadores,logo};
-    // Always save locally as backup
     try{localStorage.setItem("booking-control-data",JSON.stringify(state))}catch{}
-    // Save to Supabase with debounce
     if(supabase&&user){
       clearTimeout(saveTimer.current);
       saveTimer.current=setTimeout(()=>{
         saveState(state,user.name);
-      },500);
+      },300);
     }
   },[bookings,pendencias,ships,users,armadores,logo,loaded]);
 
-  // REALTIME subscription
+  // REALTIME subscription — ignore updates within 2s of local change
   useEffect(()=>{
     if(!supabase)return;
     const unsub=subscribeToChanges((newData)=>{
-      applyState(newData);
+      if(Date.now()-lastLocalChange.current>2000){
+        applyState(newData);
+      }
     });
     return unsub;
   },[applyState]);
