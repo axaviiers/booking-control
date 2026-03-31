@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { loadState, saveState, subscribeToChanges, supabase } from "./lib/db.js";
 
-const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000;
+const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
 const ST={
   Solicitado:{c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A",i:"⏳"},
@@ -9,6 +9,7 @@ const ST={
   "Aguardando contrato":{c:"#7C3AED",bg:"#EDE9FE",bd:"#DDD6FE",i:"📄"},
   Aprovado:{c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0",i:"✅"},
   Cancelado:{c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA",i:"🚫"},
+  "Enviado ao cliente":{c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD",i:"📤"},
 };
 const EQ=["Dry 20'","Dry 40'","Dry 40' HC","Reefer 20'","Reefer 40'","Reefer 40' HC","Open Top 20'","Open Top 40'","Flat Rack 20'","Flat Rack 40'","Tank 20'"];
 const ARM_DEF=[
@@ -30,6 +31,7 @@ const TABS=[
   {id:"bookings",label:"Bookings",icon:"📦",c:"#1D4ED8",bg:"#EFF6FF"},
   {id:"pendencias",label:"Pendências",icon:"⚠️",c:"#B45309",bg:"#FFF7ED"},
   {id:"standby",label:"Stand-by",icon:"🚢",c:"#0F766E",bg:"#F0FDFA"},
+  {id:"lixeira",label:"Lixeira",icon:"🗑",c:"#64748B",bg:"#F8FAFC"},
 ];
 const AClr={"MSC":"#1D4ED8","Maersk":"#0F766E","CMA CGM":"#B45309","Hapag-Lloyd":"#DC2626","COSCO":"#7C3AED","Evergreen":"#047857","ONE":"#BE185D","HMM":"#0369A1","Yang Ming":"#A16207","ZIM":"#6D28D9"};
 const aC=a=>AClr[a]||"#475569";
@@ -38,8 +40,11 @@ const fD=ts=>ts?new Date(ts).toLocaleDateString("pt-BR"):"—";
 const fDt=ts=>new Date(ts).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
 const isEsc=r=>(r.status==="Solicitado"||r.status==="Precisando de estratégia")&&(Date.now()-r.createdAt)>SLA_MS;
 const isUrg=r=>!!r.isUrgent;
-const slaR=r=>(r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado")?null:SLA_MS-(Date.now()-r.createdAt);
+const slaR=r=>(r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente")?null:SLA_MS-(Date.now()-r.createdAt);
 const isExp=r=>r.status==="Aprovado"&&(Date.now()-r.updatedAt)>THREE_DAYS;
+const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>FIVE_DAYS;
+const isTrashed=r=>!!r.deletedAt;
+const isTrashExp=r=>r.deletedAt&&(Date.now()-r.deletedAt)>FIVE_DAYS;
 const dUntil=d=>{if(!d)return null;return Math.ceil((new Date(d).getTime()-Date.now())/86400000)};
 
 const CSS=`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -164,7 +169,7 @@ function LogoManager({logo,onSave,onClose}){
 
 function NewBookingModal({onClose,onSave,armadores}){
   const arms=armadores.map(a=>a.name);
-  const[f,setF]=useState({client:"",clientRef:"",subject:"",emailSubject:"",bookingNumber:"",equipQty:1,equipType:EQ[0],pol:"",pod:"",armador:arms[0]||"",isUrgent:false,urgentNote:""});
+  const[f,setF]=useState({client:"",clientRef:"",subject:"",emailSubject:"",bookingNumber:"",equipQty:1,equipType:EQ[0],pol:"",pod:"",armador:arms[0]||"",navio:"",dataSaida:"",isUrgent:false,urgentNote:""});
   const s=(k,v)=>setF(p=>({...p,[k]:v}));const ok=f.client&&f.subject&&f.pol&&f.pod&&f.armador;
   return(<Modal onClose={onClose} wide>
     <h2 style={{fontSize:17,fontWeight:700,marginBottom:20}}>Nova Solicitação</h2>
@@ -175,6 +180,10 @@ function NewBookingModal({onClose,onSave,armadores}){
     <div style={{display:"grid",gridTemplateColumns:"80px 1fr",gap:12,marginBottom:12}}><div><label style={lS}>Qtd</label><input type="number" min={1} value={f.equipQty} onChange={e=>s("equipQty",Math.max(1,parseInt(e.target.value)||1))} style={iS}/></div><div><label style={lS}>Equipamento</label><select value={f.equipType} onChange={e=>s("equipType",e.target.value)} style={selS}>{EQ.map(t=><option key={t}>{t}</option>)}</select></div></div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}><div><label style={lS}>POL *</label><input value={f.pol} onChange={e=>s("pol",e.target.value)} style={iS}/></div><div><label style={lS}>POD *</label><input value={f.pod} onChange={e=>s("pod",e.target.value)} style={iS}/></div></div>
     <div style={{marginBottom:12}}><label style={lS}>Armador *</label><select value={f.armador} onChange={e=>s("armador",e.target.value)} style={selS}>{arms.map(a=><option key={a}>{a}</option>)}</select></div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+      <div><label style={lS}>🚢 Nome do Navio</label><input value={f.navio} onChange={e=>s("navio",e.target.value)} placeholder="Ex: MSC Fantasia" style={iS}/></div>
+      <div><label style={lS}>📅 Data de Saída</label><input type="date" value={f.dataSaida} onChange={e=>s("dataSaida",e.target.value)} style={iS}/></div>
+    </div>
     <div style={{marginBottom:18,padding:12,borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA"}}>
       <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:f.isUrgent?8:0}}><input type="checkbox" checked={f.isUrgent} onChange={e=>s("isUrgent",e.target.checked)} style={{width:16,height:16,accentColor:"#DC2626"}}/><span style={{color:"#DC2626",fontSize:13,fontWeight:600}}>🔴 URGENTE</span></label>
       {f.isUrgent&&<input value={f.urgentNote} onChange={e=>s("urgentNote",e.target.value)} placeholder="Motivo..." style={{...iS,border:"1px solid #FECACA"}}/>}
@@ -183,7 +192,7 @@ function NewBookingModal({onClose,onSave,armadores}){
   </Modal>);
 }
 
-function BookingDetail({req,onClose,onChangeStatus,onUpdate,user}){
+function BookingDetail({req,onClose,onChangeStatus,onUpdate,onDelete,user}){
   const[obsText,setObsText]=useState("");
   const addObs=()=>{if(!obsText.trim())return;onUpdate(req.id,{observations:[...(req.observations||[]),{text:obsText.trim(),by:user.name,at:Date.now()}]});setObsText("")};
   return(<Modal onClose={onClose} wide>
@@ -199,8 +208,8 @@ function BookingDetail({req,onClose,onChangeStatus,onUpdate,user}){
       </div>
       <button onClick={onClose} style={{background:"none",border:"none",color:"#94A3B8",fontSize:18,cursor:"pointer"}}>✕</button>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:8}}>
-      {[["Cliente",req.client],["Ref.",req.clientRef],["Booking",req.bookingNumber||"Pendente"],["Equip.",`${req.equipQty}x ${req.equipType}`],["Armador",req.armador],["E-mail",req.emailSubject]].map(([l,v],i)=><div key={i} style={{padding:"7px 10px",borderRadius:6,background:"#F8FAFC"}}><p style={{color:"#94A3B8",fontSize:9,textTransform:"uppercase"}}>{l}</p><p style={{color:"#334155",fontSize:12,fontWeight:500}}>{v||"—"}</p></div>)}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:8}}>
+      {[["Cliente",req.client],["Ref.",req.clientRef],["Booking",req.bookingNumber||"Pendente"],["Equip.",`${req.equipQty}x ${req.equipType}`],["Armador",req.armador],["E-mail",req.emailSubject],["Navio",req.navio],["Saída",req.dataSaida?fD(req.dataSaida):null]].map(([l,v],i)=><div key={i} style={{padding:"7px 10px",borderRadius:6,background:"#F8FAFC"}}><p style={{color:"#94A3B8",fontSize:9,textTransform:"uppercase"}}>{l}</p><p style={{color:"#334155",fontSize:12,fontWeight:500}}>{v||"—"}</p></div>)}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
       <div style={{padding:"7px 10px",borderRadius:6,background:"#EFF6FF"}}><p style={{color:"#94A3B8",fontSize:9}}>POL</p><p style={{color:"#1D4ED8",fontSize:13,fontWeight:600}}>🚢 {req.pol}</p></div>
@@ -211,7 +220,10 @@ function BookingDetail({req,onClose,onChangeStatus,onUpdate,user}){
       {(req.observations||[]).map((o,i)=><div key={i} style={{padding:"6px 10px",borderRadius:6,background:"#FFFBEB",border:"1px solid #FEF3C7",marginBottom:3}}><p style={{fontSize:12}}>{o.text}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:1}}>{o.by} · {fDt(o.at)}</p></div>)}
       <div style={{display:"flex",gap:6}}><input value={obsText} onChange={e=>setObsText(e.target.value)} placeholder="Observação..." style={{...iS,flex:1}} onKeyDown={e=>{if(e.key==="Enter")addObs()}}/><button onClick={addObs} style={{...bP,padding:"8px 14px",fontSize:11}}>Enviar</button></div>
     </div>
-    {req.status!=="Aprovado"&&req.status!=="Cancelado"&&<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{Object.keys(ST).filter(s=>s!==req.status).map(s=><button key={s} onClick={()=>onChangeStatus(req.id,s)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${ST[s].bd}`,background:ST[s].bg,color:ST[s].c,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{ST[s].i} {s}</button>)}</div>}
+    {req.status!=="Aprovado"&&req.status!=="Cancelado"&&req.status!=="Enviado ao cliente"&&<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{Object.keys(ST).filter(s=>s!==req.status).map(s=><button key={s} onClick={()=>onChangeStatus(req.id,s)} style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${ST[s].bd}`,background:ST[s].bg,color:ST[s].c,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{ST[s].i} {s}</button>)}</div>}
+    <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid #F1F5F9",display:"flex",justifyContent:"flex-end"}}>
+      <button onClick={()=>{if(window.confirm("Mover este processo para a lixeira?"))onDelete(req.id)}} style={{padding:"6px 14px",borderRadius:6,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>🗑 Excluir Processo</button>
+    </div>
   </Modal>);
 }
 
@@ -347,40 +359,48 @@ function Notifications({bookings,ships,armadores}){
 function BookingsPanel({data,setData,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[sel,setSel]=useState(null);const[filter,setFilter]=useState("Todos");const[tick,setTick]=useState(0);
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),1000);return()=>clearInterval(i)},[]);
-  useEffect(()=>{if(data.some(isExp))setData(prev=>prev.filter(r=>!isExp(r)))},[data]);
-  const escC=data.filter(isEsc).length,urgC=data.filter(isUrg).length;
-  const filt=filter==="Todos"?data:filter==="Escalonados"?data.filter(isEsc):filter==="Urgentes"?data.filter(isUrg):data.filter(r=>r.status===filter);
+  // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 5 days, trashed after 5 days
+  useEffect(()=>{
+    const shouldClean=data.some(r=>isExp(r)||isEnvExp(r)||isTrashExp(r));
+    if(shouldClean)setData(prev=>prev.filter(r=>!isExp(r)&&!isEnvExp(r)&&!isTrashExp(r)));
+  },[data]);
+  const active=data.filter(r=>!isTrashed(r));
+  const escC=active.filter(isEsc).length,urgC=active.filter(isUrg).length;
+  const filt=filter==="Todos"?active:filter==="Escalonados"?active.filter(isEsc):filter==="Urgentes"?active.filter(isUrg):active.filter(r=>r.status===filter);
   const addReq=f=>{setData(prev=>[{id:`BK-${String(prev.length+1).padStart(3,"0")}`,status:"Solicitado",createdAt:Date.now(),updatedAt:Date.now(),createdBy:user.name,history:[],observations:[],...f},...prev]);setShowNew(false)};
   const chgSt=(id,s)=>{setData(prev=>prev.map(r=>r.id===id?{...r,status:s,updatedAt:Date.now(),history:[...r.history,{from:r.status,to:s,at:Date.now(),by:user.name}]}:r));setSel(null)};
   const updReq=(id,fields)=>{setData(prev=>prev.map(r=>r.id===id?{...r,...fields,updatedAt:Date.now()}:r));setSel(prev=>prev?{...prev,...fields}:prev)};
+  const delReq=id=>{setData(prev=>prev.map(r=>r.id===id?{...r,deletedAt:Date.now(),deletedBy:user.name}:r));setSel(null)};
   return(<div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:8,marginBottom:16}}>
-      {[{l:"Total",v:data.length,c:"#475569",bg:"#F8FAFC",bd:"#E2E8F0"},{l:"Solicitado",v:data.filter(r=>r.status==="Solicitado").length,c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A"},{l:"Urgentes",v:urgC,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"},{l:"Aprovado",v:data.filter(r=>r.status==="Aprovado").length,c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0"},{l:"Cancelado",v:data.filter(r=>r.status==="Cancelado").length,c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA"},{l:"Escalonado",v:escC,c:escC?"#DC2626":"#94A3B8",bg:escC?"#FEF2F2":"#F8FAFC",bd:escC?"#FECACA":"#E2E8F0"}].map((s,i)=>
-        <div key={i} onClick={()=>setFilter(s.l==="Total"?"Todos":s.l==="Escalonado"?"Escalonados":s.l)} style={{padding:"12px 8px",borderRadius:10,background:s.bg,border:`1px solid ${s.bd}`,textAlign:"center",cursor:"pointer",transition:"transform .15s"}} onMouseOver={e=>e.currentTarget.style.transform="translateY(-2px)"} onMouseOut={e=>e.currentTarget.style.transform="none"}><p style={{fontSize:20,fontWeight:700,color:s.c}}>{s.v}</p><p style={{color:"#94A3B8",fontSize:8,fontWeight:600,textTransform:"uppercase"}}>{s.l}</p></div>)}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:16}}>
+      {[{l:"Total",v:active.length,c:"#475569",bg:"#F8FAFC",bd:"#E2E8F0"},{l:"Solicitado",v:active.filter(r=>r.status==="Solicitado").length,c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A"},{l:"Urgentes",v:urgC,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"},{l:"Aprovado",v:active.filter(r=>r.status==="Aprovado").length,c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0"},{l:"Enviado ao cliente",v:active.filter(r=>r.status==="Enviado ao cliente").length,c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD"},{l:"Cancelado",v:active.filter(r=>r.status==="Cancelado").length,c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA"},{l:"Escalonado",v:escC,c:escC?"#DC2626":"#94A3B8",bg:escC?"#FEF2F2":"#F8FAFC",bd:escC?"#FECACA":"#E2E8F0"}].map((s,i)=>
+        <div key={i} onClick={()=>setFilter(s.l==="Total"?"Todos":s.l==="Escalonado"?"Escalonados":s.l)} style={{padding:"10px 6px",borderRadius:10,background:s.bg,border:`1px solid ${s.bd}`,textAlign:"center",cursor:"pointer",transition:"transform .15s"}} onMouseOver={e=>e.currentTarget.style.transform="translateY(-2px)"} onMouseOut={e=>e.currentTarget.style.transform="none"}><p style={{fontSize:18,fontWeight:700,color:s.c}}>{s.v}</p><p style={{color:"#94A3B8",fontSize:7,fontWeight:600,textTransform:"uppercase"}}>{s.l}</p></div>)}
     </div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>{["Todos","Solicitado","Precisando de estratégia","Aguardando contrato","Urgentes","Aprovado","Cancelado","Escalonados"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"4px 10px",borderRadius:6,border:filter===f?"none":"1px solid #E2E8F0",background:filter===f?BRAND_LT:"#fff",color:filter===f?BRAND:"#64748B",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{f}</button>)}</div>
+      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>{["Todos","Solicitado","Precisando de estratégia","Aguardando contrato","Urgentes","Aprovado","Enviado ao cliente","Cancelado","Escalonados"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"4px 8px",borderRadius:6,border:filter===f?"none":"1px solid #E2E8F0",background:filter===f?BRAND_LT:"#fff",color:filter===f?BRAND:"#64748B",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{f}</button>)}</div>
       <button onClick={()=>setShowNew(true)} style={{...bP,padding:"7px 16px",fontSize:11}}>+ Novo Booking</button>
     </div>
-    <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:900}}>
-      <thead><tr style={{borderBottom:"2px solid #F1F5F9",background:"#FAFBFC"}}>{["","ID","Cliente","Assunto","Booking","Equip.","Rota","Armador","Status","SLA"].map((h,i)=><th key={i} style={{padding:"10px 5px",textAlign:"left",color:"#94A3B8",fontSize:9,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+    <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:1000}}>
+      <thead><tr style={{borderBottom:"2px solid #F1F5F9",background:"#FAFBFC"}}>{["","ID","Cliente","Assunto","Booking","Equip.","Rota","Navio","Armador","Status","SLA",""].map((h,i)=><th key={i} style={{padding:"10px 4px",textAlign:"left",color:"#94A3B8",fontSize:8,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
       <tbody>{filt.map(r=>{const esc=isEsc(r),urg=isUrg(r),sla=slaR(r),warn=sla!==null&&sla>0&&sla<URGENT_MS;
         return(<tr key={r.id} onClick={()=>setSel(r)} style={{borderBottom:"1px solid #F1F5F9",background:esc?"#FEF2F2":urg?"#FEF2F2":"#fff",cursor:"pointer"}} onMouseOver={e=>{if(!esc&&!urg)e.currentTarget.style.background="#F8FAFC"}} onMouseOut={e=>{e.currentTarget.style.background=esc?"#FEF2F2":urg?"#FEF2F2":"#fff"}}>
-          <td style={{padding:"10px 4px",width:20}}>{urg&&<span title={r.urgentNote}>🔴</span>}{esc&&!urg&&<span style={{animation:"pulse 1s ease infinite",fontSize:10}}>🟠</span>}</td>
-          <td style={{padding:"10px 5px",fontSize:11,color:"#94A3B8",fontWeight:600}}>{r.id}</td>
-          <td style={{padding:"10px 5px"}}><p style={{fontSize:12,fontWeight:600}}>{r.client}</p></td>
-          <td style={{padding:"10px 5px",fontSize:11,color:"#475569",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.subject}</td>
-          <td style={{padding:"10px 5px",fontSize:11,color:r.bookingNumber?"#475569":"#CBD5E1"}}>{r.bookingNumber||"—"}</td>
-          <td style={{padding:"10px 5px",fontSize:11,whiteSpace:"nowrap"}}>{r.equipQty}x {r.equipType}</td>
-          <td style={{padding:"10px 5px",whiteSpace:"nowrap"}}><span style={{color:"#1D4ED8",fontSize:11}}>{r.pol}</span><span style={{color:"#CBD5E1",margin:"0 2px"}}>→</span><span style={{color:"#047857",fontSize:11}}>{r.pod}</span></td>
-          <td style={{padding:"10px 5px"}}><span style={{padding:"2px 6px",borderRadius:12,fontSize:9,fontWeight:600,background:`${aC(r.armador)}12`,color:aC(r.armador)}}>{r.armador}</span></td>
-          <td style={{padding:"10px 5px"}}><span style={{padding:"2px 6px",borderRadius:16,fontSize:9,fontWeight:600,background:ST[r.status]?.bg,color:ST[r.status]?.c}}>{ST[r.status]?.i} {r.status}</span></td>
-          <td style={{padding:"10px 5px",fontSize:11,fontWeight:600,whiteSpace:"nowrap",color:sla===null?"#047857":sla>0?(warn?"#B45309":"#475569"):"#DC2626"}}>{sla===null?"✓":sla>0?fT(sla):<span style={{animation:"pulse 1.5s ease infinite"}}>ESTOURADO</span>}</td>
+          <td style={{padding:"10px 3px",width:16}}>{urg&&<span title={r.urgentNote}>🔴</span>}{esc&&!urg&&<span style={{animation:"pulse 1s ease infinite",fontSize:10}}>🟠</span>}</td>
+          <td style={{padding:"10px 4px",fontSize:10,color:"#94A3B8",fontWeight:600}}>{r.id}</td>
+          <td style={{padding:"10px 4px"}}><p style={{fontSize:11,fontWeight:600}}>{r.client}</p></td>
+          <td style={{padding:"10px 4px",fontSize:10,color:"#475569",maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.subject}</td>
+          <td style={{padding:"10px 4px",fontSize:10,color:r.bookingNumber?"#475569":"#CBD5E1"}}>{r.bookingNumber||"—"}</td>
+          <td style={{padding:"10px 4px",fontSize:10,whiteSpace:"nowrap"}}>{r.equipQty}x {r.equipType}</td>
+          <td style={{padding:"10px 4px",whiteSpace:"nowrap"}}><span style={{color:"#1D4ED8",fontSize:10}}>{r.pol}</span><span style={{color:"#CBD5E1"}}>→</span><span style={{color:"#047857",fontSize:10}}>{r.pod}</span></td>
+          <td style={{padding:"10px 4px",fontSize:10,color:"#0F766E"}}>{r.navio||"—"}{r.dataSaida?<span style={{display:"block",fontSize:8,color:"#94A3B8"}}>{fD(r.dataSaida)}</span>:null}</td>
+          <td style={{padding:"10px 4px"}}><span style={{padding:"2px 5px",borderRadius:12,fontSize:8,fontWeight:600,background:`${aC(r.armador)}12`,color:aC(r.armador)}}>{r.armador}</span></td>
+          <td style={{padding:"10px 4px"}}><span style={{padding:"2px 5px",borderRadius:16,fontSize:8,fontWeight:600,background:ST[r.status]?.bg,color:ST[r.status]?.c}}>{ST[r.status]?.i} {r.status}</span></td>
+          <td style={{padding:"10px 4px",fontSize:10,fontWeight:600,whiteSpace:"nowrap",color:sla===null?"#047857":sla>0?(warn?"#B45309":"#475569"):"#DC2626"}}>{sla===null?"✓":sla>0?fT(sla):<span style={{animation:"pulse 1.5s ease infinite"}}>ESTOURADO</span>}</td>
+          <td style={{padding:"10px 3px"}}><button onClick={e=>{e.stopPropagation();if(window.confirm("Mover para lixeira?"))delReq(r.id)}} style={{background:"none",border:"none",color:"#CBD5E1",cursor:"pointer",fontSize:11}} title="Excluir">🗑</button></td>
         </tr>)})}
-        {filt.length===0&&<tr><td colSpan={10} style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma solicitação</td></tr>}
+        {filt.length===0&&<tr><td colSpan={12} style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma solicitação</td></tr>}
       </tbody></table></div></div>
     {showNew&&<NewBookingModal onClose={()=>setShowNew(false)} onSave={addReq} armadores={armadores}/>}
-    {sel&&<BookingDetail req={sel} onClose={()=>setSel(null)} onChangeStatus={chgSt} onUpdate={updReq} user={user}/>}
+    {sel&&<BookingDetail req={sel} onClose={()=>setSel(null)} onChangeStatus={chgSt} onUpdate={updReq} onDelete={delReq} user={user}/>}
   </div>);
 }
 
@@ -403,6 +423,42 @@ function PendenciasPanel({data,setData,user}){
       {!pending.length&&<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma pendência</div>}
     </div>
     {showNew&&<NewPendenciaModal onClose={()=>setShowNew(false)} onSave={f=>{setData(prev=>[{id:`PD-${Date.now()}`,...f,resolved:false,createdBy:user.name,createdAt:Date.now()},...prev]);setShowNew(false)}}/>}
+  </div>);
+}
+
+// ═════════════════════════════════════════════
+// LIXEIRA (Trash — auto-purge after 5 days)
+// ═════════════════════════════════════════════
+function LixeiraPanel({data,setData}){
+  const trashed=data.filter(isTrashed);
+  const restore=id=>setData(prev=>prev.map(r=>r.id===id?{...r,deletedAt:undefined,deletedBy:undefined}:r));
+  const permDel=id=>{if(window.confirm("Apagar permanentemente? Não pode ser desfeito."))setData(prev=>prev.filter(r=>r.id!==id))};
+  return(<div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div style={{display:"flex",gap:12}}>
+        <div style={{padding:"12px 20px",borderRadius:10,background:"#F8FAFC",border:"1px solid #E2E8F0",textAlign:"center"}}><p style={{fontSize:22,fontWeight:700,color:"#64748B"}}>{trashed.length}</p><p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#94A3B8"}}>Na Lixeira</p></div>
+      </div>
+      <p style={{color:"#94A3B8",fontSize:11}}>Itens são apagados automaticamente após 5 dias</p>
+    </div>
+    {trashed.length>0?<div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>
+      {trashed.map(r=>{
+        const days=Math.ceil((Date.now()-r.deletedAt)/86400000);const left=5-days;
+        return(<div key={r.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:2}}>
+              <span style={{fontSize:11,fontWeight:600,color:"#94A3B8"}}>{r.id}</span>
+              <span style={{fontSize:12,fontWeight:600}}>{r.client}</span>
+              <span style={{padding:"2px 6px",borderRadius:16,fontSize:8,fontWeight:600,background:ST[r.status]?.bg,color:ST[r.status]?.c}}>{r.status}</span>
+            </div>
+            <p style={{fontSize:11,color:"#475569"}}>{r.subject}</p>
+            <p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>Excluído por {r.deletedBy||"—"} · {fDt(r.deletedAt)} · {left>0?`Será apagado em ${left} dia(s)`:"Será apagado hoje"}</p>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>restore(r.id)} style={{padding:"5px 12px",borderRadius:6,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>♻️ Restaurar</button>
+            <button onClick={()=>permDel(r.id)} style={{padding:"5px 12px",borderRadius:6,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✕ Apagar</button>
+          </div>
+        </div>)})}
+    </div>:<div style={{padding:48,textAlign:"center",color:"#94A3B8",fontSize:13}}>Lixeira vazia</div>}
   </div>);
 }
 
@@ -602,6 +658,7 @@ export default function App(){
         {tab==="bookings"&&<BookingsPanel data={bookings} setData={setBookings} armadores={armadores} user={user}/>}
         {tab==="pendencias"&&<PendenciasPanel data={pendencias} setData={setPendencias} user={user}/>}
         {tab==="standby"&&<StandbyPanel ships={ships} setShips={setShips} armadores={armadores} user={user}/>}
+        {tab==="lixeira"&&<LixeiraPanel data={bookings} setData={setBookings}/>}
       </div>
       {showUsers&&<UserManager users={users} onSave={l=>{setUsers(l);setShowUsers(false)}} onClose={()=>setShowUsers(false)}/>}
       {showArm&&<ArmadorManager armadores={armadores} onSave={l=>{setArmadores(l);setShowArm(false)}} onClose={()=>setShowArm(false)}/>}
