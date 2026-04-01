@@ -265,7 +265,7 @@ function ShipModal({onClose,onSave,armadores,initial}){
 
 // ─── ADD BOOKING TO SHIP — campos do primeiro + deadline de carga ───
 function AddShipBookingModal({onClose,onSave,ship}){
-  const first=ship.bookings[0];
+  const bkgs=ship.bookings||[];const first=bkgs[0];
   const[f,setF]=useState({
     bookingNumber:"",
     client:first?.client||ship.cliente||"",
@@ -347,7 +347,7 @@ function Notifications({bookings,ships,armadores}){
   armadores.forEach(arm=>{
     if(arm.ddlDays<=0)return;
     ships.filter(s=>s.armador===arm.name).forEach(s=>{
-      s.bookings.forEach(b=>{
+      (s.bookings||[]).forEach(b=>{
         if(!b.deadlineCarga)return;
         const d=dUntil(b.deadlineCarga);
         if(d!==null&&d<=arm.ddlDays&&d>=0)notes.push({msg:`⏰ ${arm.name} — "${s.nome}" BKG ${b.bookingNumber||"s/n"}: DDL carga em ${d}d!`,color:aC(arm.name),bg:"#FEF2F2",bd:"#FECACA"});
@@ -470,24 +470,24 @@ function LixeiraPanel({data,setData}){
 function StandbyPanel({ships,setShips,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[editShip,setEditShip]=useState(null);const[addBkgTo,setAddBkgTo]=useState(null);const[colArm,setColArm]=useState({});const[colShip,setColShip]=useState({});
   const arms=armadores.map(a=>a.name);
-  const grouped=useMemo(()=>{const g={};arms.forEach(a=>{g[a]=ships.filter(s=>s.armador===a)});return g},[ships,arms]);
+  const grouped=useMemo(()=>{const g={};arms.forEach(a=>{g[a]=ships.filter(s=>s.armador===a).map(s=>({...s,bookings:s.bookings||[]}))});return g},[ships,arms]);
   const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?"))setShips(prev=>prev.filter(s=>s.id!==id))};
-  const delBkg=(shipId,bkgId)=>setShips(prev=>prev.map(s=>s.id===shipId?{...s,bookings:s.bookings.filter(b=>b.id!==bkgId)}:s));
+  const delBkg=(shipId,bkgId)=>setShips(prev=>prev.map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).filter(b=>b.id!==bkgId)}:s));
 
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <div style={{display:"flex",gap:12}}>
         <div style={{padding:"12px 20px",borderRadius:10,background:"#F0FDFA",border:"1px solid #99F6E4",textAlign:"center"}}><p style={{fontSize:22,fontWeight:700,color:"#0F766E"}}>{ships.length}</p><p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#115E59"}}>Navios</p></div>
-        <div style={{padding:"12px 20px",borderRadius:10,background:"#DBEAFE",border:"1px solid #BFDBFE",textAlign:"center"}}><p style={{fontSize:22,fontWeight:700,color:"#1D4ED8"}}>{ships.reduce((a,s)=>a+s.bookings.length,0)}</p><p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#1E40AF"}}>Bookings</p></div>
+        <div style={{padding:"12px 20px",borderRadius:10,background:"#DBEAFE",border:"1px solid #BFDBFE",textAlign:"center"}}><p style={{fontSize:22,fontWeight:700,color:"#1D4ED8"}}>{ships.reduce((a,s)=>a+(s.bookings||[]).length,0)}</p><p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#1E40AF"}}>Bookings</p></div>
       </div>
       <button onClick={()=>setShowNew(true)} style={{...bP,background:"#0F766E",padding:"8px 16px",fontSize:11}}>+ Novo Navio</button>
     </div>
 
     {arms.filter(a=>grouped[a]?.length>0).map(arm=>{
       const col=aC(arm);const collapsed=colArm[arm];const armShips=grouped[arm];const armCfg=armadores.find(a=>a.name===arm);
-      const totDisp=armShips.reduce((a,s)=>a+s.bookings.reduce((a2,b)=>a2+(b.qtdDisponivel||b.qtdTotal||0),0),0);
-      const totUsando=armShips.reduce((a,s)=>a+s.bookings.reduce((a2,b)=>a2+(b.qtdUsando||0),0),0);
-      let nearDdl=null;armShips.forEach(s=>s.bookings.forEach(b=>{if(b.deadlineCarga){const d=dUntil(b.deadlineCarga);if(d!==null&&d>=0&&(nearDdl===null||d<nearDdl))nearDdl=d}}));
+      const totDisp=armShips.reduce((a,s)=>a+(s.bookings||[]).reduce((a2,b)=>a2+(b.qtdDisponivel||b.qtdTotal||0),0),0);
+      const totUsando=armShips.reduce((a,s)=>a+(s.bookings||[]).reduce((a2,b)=>a2+(b.qtdUsando||0),0),0);
+      let nearDdl=null;armShips.forEach(s=>(s.bookings||[]).forEach(b=>{if(b.deadlineCarga){const d=dUntil(b.deadlineCarga);if(d!==null&&d>=0&&(nearDdl===null||d<nearDdl))nearDdl=d}}));
       return(<div key={arm} style={{marginBottom:16}}>
         <div onClick={()=>setColArm(p=>({...p,[arm]:!p[arm]}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 16px",borderRadius:collapsed?"10px":"10px 10px 0 0",background:`${col}10`,border:`1px solid ${col}25`,cursor:"pointer"}}>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -503,9 +503,10 @@ function StandbyPanel({ships,setShips,armadores,user}){
         </div>
         {!collapsed&&<div style={{border:`1px solid ${col}15`,borderTop:"none",borderRadius:"0 0 10px 10px",background:"#fff"}}>
           {armShips.map(ship=>{
-            const sobra=ship.bookings.reduce((a,b)=>a+(b.qtdDisponivel||b.qtdTotal||0),0)-ship.bookings.reduce((a,b)=>a+(b.qtdUsando||0),0);const shipCol=colShip[ship.id];
-            const shipDisp=ship.bookings.reduce((a,b)=>a+(b.qtdDisponivel||b.qtdTotal||0),0);const shipUso=ship.bookings.reduce((a,b)=>a+(b.qtdUsando||0),0);
-            let sDdl=null;ship.bookings.forEach(b=>{if(b.deadlineCarga){const d=dUntil(b.deadlineCarga);if(d!==null&&d>=0&&(sDdl===null||d<sDdl))sDdl=d}});
+            const bkgs=ship.bookings||[];
+            const sobra=bkgs.reduce((a,b)=>a+(b.qtdDisponivel||b.qtdTotal||0),0)-bkgs.reduce((a,b)=>a+(b.qtdUsando||0),0);const shipCol=colShip[ship.id];
+            const shipDisp=bkgs.reduce((a,b)=>a+(b.qtdDisponivel||b.qtdTotal||0),0);const shipUso=bkgs.reduce((a,b)=>a+(b.qtdUsando||0),0);
+            let sDdl=null;bkgs.forEach(b=>{if(b.deadlineCarga){const d=dUntil(b.deadlineCarga);if(d!==null&&d>=0&&(sDdl===null||d<sDdl))sDdl=d}});
             const ddlAlert=armCfg?.ddlDays>0&&sDdl!==null&&sDdl<=armCfg.ddlDays;
             return(<div key={ship.id} style={{borderBottom:`1px solid ${col}10`}}>
               <div onClick={()=>setColShip(p=>({...p,[ship.id]:!p[ship.id]}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",cursor:"pointer",background:ddlAlert?"#FEF2F205":"transparent"}}>
@@ -513,7 +514,7 @@ function StandbyPanel({ships,setShips,armadores,user}){
                   <span style={{color:"#94A3B8",fontSize:11}}>{shipCol?"▸":"▾"}</span>
                   <h4 style={{fontSize:13,fontWeight:700}}>🚢 {ship.nome}</h4>
                   <span style={{fontSize:10,color:"#64748B"}}>{ship.pol}→{ship.pod}</span>
-                  <span style={{padding:"1px 6px",borderRadius:8,background:`${col}10`,color:col,fontSize:9,fontWeight:600}}>{ship.bookings.length} bkg</span>
+                  <span style={{padding:"1px 6px",borderRadius:8,background:`${col}10`,color:col,fontSize:9,fontWeight:600}}>{bkgs.length} bkg</span>
                   {ddlAlert&&<span style={{padding:"1px 6px",borderRadius:8,background:"#DC2626",color:"#fff",fontSize:9,fontWeight:700,animation:"pulse 1.5s ease infinite"}}>⏰ DDL {sDdl}d</span>}
                 </div>
                 <span style={{fontSize:10,color:"#64748B"}}>{shipDisp}D/{shipUso}U/<span style={{color:sobra>0?"#047857":"#DC2626"}}>{sobra}S</span></span>
@@ -529,9 +530,9 @@ function StandbyPanel({ships,setShips,armadores,user}){
                   <div style={{padding:8,borderRadius:6,background:cancelAlert?"#FEF2F2":"#F8FAFC",textAlign:"center"}}><p style={{fontSize:8,color:"#94A3B8",textTransform:"uppercase"}}>Cancelamento</p><p style={{fontSize:12,fontWeight:700,color:"#DC2626"}}>{fD(ship.dataCancelamento)}{cancelAlert?` (${cancelDays}d!)`:""}</p></div>
                   <div style={{padding:8,borderRadius:6,background:"#EFF6FF",textAlign:"center"}}><p style={{fontSize:8,color:"#94A3B8",textTransform:"uppercase"}}>Rota</p><p style={{fontSize:12,fontWeight:600,color:"#1D4ED8"}}>{ship.pol} → {ship.pod}</p></div>
                 </div>
-                {ship.bookings.length>0&&<div style={{marginTop:8}}>
-                  <p style={{fontSize:10,fontWeight:600,color:"#94A3B8",textTransform:"uppercase",marginBottom:6}}>Histórico de Bookings ({ship.bookings.length})</p>
-                  {ship.bookings.map(b=>{const bD=b.deadlineCarga?dUntil(b.deadlineCarga):null;const bA=armCfg?.ddlDays>0&&bD!==null&&bD<=armCfg.ddlDays&&bD>=0;const bSobra=(b.qtdDisponivel||b.qtdTotal||0)-(b.qtdUsando||0);
+                {bkgs.length>0&&<div style={{marginTop:8}}>
+                  <p style={{fontSize:10,fontWeight:600,color:"#94A3B8",textTransform:"uppercase",marginBottom:6}}>Histórico de Bookings ({bkgs.length})</p>
+                  {bkgs.map(b=>{const bD=b.deadlineCarga?dUntil(b.deadlineCarga):null;const bA=armCfg?.ddlDays>0&&bD!==null&&bD<=armCfg.ddlDays&&bD>=0;const bSobra=(b.qtdDisponivel||b.qtdTotal||0)-(b.qtdUsando||0);
                     return(<div key={b.id} style={{padding:"12px 14px",borderRadius:10,background:bA?"#FEF2F2":`${col}04`,border:`1px solid ${bA?"#FECACA":`${col}15`}`,marginBottom:6}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
                         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -578,7 +579,7 @@ export default function App(){
   const applyState=useCallback((d)=>{
     if(d.bookings)setBookings(d.bookings);
     if(d.pendencias)setPendencias(d.pendencias);
-    if(d.ships)setShips(d.ships);
+    if(d.ships)setShips(d.ships.map(s=>({...s,bookings:s.bookings||[]})));
     const merged=[...(d.users||[])];
     USR_DEF.forEach(def=>{if(!merged.find(u=>u.username===def.username))merged.push(def)});
     setUsers(merged);
@@ -599,24 +600,28 @@ export default function App(){
   })()},[applyState]);
 
   const lastLocalChange=useRef(0);
+  const saveRef=useRef(null);
 
-  // SAVE on any change — immediate
+  // SAVE on any change — debounced 400ms to batch rapid changes
   useEffect(()=>{
     if(!loaded)return;
     lastLocalChange.current=Date.now();
     const state={bookings,pendencias,ships,users,armadores,logo};
-    try{localStorage.setItem("booking-control-data",JSON.stringify(state))}catch{}
+    try{localStorage.setItem("booking-control-data",JSON.stringify(state))}catch(e){console.warn("localStorage save failed",e)}
     if(supabase&&user){
-      saveState(state,user.name);
+      if(saveRef.current)clearTimeout(saveRef.current);
+      saveRef.current=setTimeout(()=>{
+        try{saveState(state,user.name).catch(e=>console.warn("Supabase save error",e))}catch(e){console.warn("Save error",e)}
+      },400);
     }
   },[bookings,pendencias,ships,users,armadores,logo,loaded]);
 
-  // REALTIME subscription — ignore updates within 3s of local change
+  // REALTIME subscription — ignore updates within 4s of local change
   useEffect(()=>{
     if(!supabase)return;
     const unsub=subscribeToChanges((newData)=>{
-      if(Date.now()-lastLocalChange.current>3000){
-        applyState(newData);
+      if(Date.now()-lastLocalChange.current>4000){
+        try{applyState(newData)}catch(e){console.warn("Apply state error",e)}
       }
     });
     return unsub;
