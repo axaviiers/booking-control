@@ -1,8 +1,11 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { loadState, saveState, subscribeToChanges, supabase } from "./lib/db.js";
 
 const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
+const RU_PORTS=["saint petersburg","st petersburg","st. petersburg","novorossiysk"];
+const isRuPort=r=>{try{const p=((r?.pol||"")+(r?.pod||"")).toLowerCase();return RU_PORTS.some(rp=>p.includes(rp))}catch{return false}};
+const getSLA=r=>isRuPort(r)?24*3600000:2*3600000;
 const ST={
   Solicitado:{c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A",i:"⏳"},
   "Precisando de estratégia":{c:"#1D4ED8",bg:"#DBEAFE",bd:"#BFDBFE",i:"🧠"},
@@ -38,13 +41,16 @@ const aC=a=>AClr[a]||"#475569";
 const fT=ms=>{if(ms<=0)return"00:00:00";const h=Math.floor(ms/3600000),m=Math.floor((ms%3600000)/60000),s=Math.floor((ms%60000)/1000);return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`};
 const fD=ts=>ts?new Date(ts).toLocaleDateString("pt-BR"):"—";
 const fDt=ts=>new Date(ts).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
-const isEsc=r=>(r.status==="Solicitado"||r.status==="Precisando de estratégia")&&(Date.now()-r.createdAt)>SLA_MS;
+const isEsc=r=>{try{return(r.status==="Solicitado"||r.status==="Precisando de estratégia")&&(Date.now()-(r.createdAt||0))>getSLA(r)}catch{return false}};
 const isUrg=r=>!!r.isUrgent;
-const slaR=r=>(r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente")?null:SLA_MS-(Date.now()-r.createdAt);
+const slaR=r=>{try{if(!r||r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente")return null;return getSLA(r)-(Date.now()-(r.createdAt||0))}catch{return null}};
 const isExp=r=>r.status==="Aprovado"&&(Date.now()-r.updatedAt)>THREE_DAYS;
 const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>TWO_DAYS;
 const isTrashed=r=>!!r.deletedAt;
 const isTrashExp=r=>r.deletedAt&&(Date.now()-r.deletedAt)>FIVE_DAYS;
+const A=v=>Array.isArray(v)?v:[];
+const armN=a=>typeof a==="string"?a:(a?.name||"");
+const armD=a=>typeof a==="object"?(a?.ddlDays||0):0;
 const dUntil=d=>{if(!d)return null;return Math.ceil((new Date(d).getTime()-Date.now())/86400000)};
 
 const CSS=`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -61,6 +67,8 @@ const lS={color:"#64748B",fontSize:10,fontWeight:600,textTransform:"uppercase",l
 const selS={...iS,cursor:"pointer",appearance:"none",backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' fill='%2394A3B8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 10px center"};
 const bP={padding:"9px 20px",borderRadius:8,border:"none",background:BRAND,color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"};
 const bG={padding:"9px 16px",borderRadius:8,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:13,cursor:"pointer",fontFamily:"inherit"};
+
+class ErrorBoundary extends React.Component{constructor(p){super(p);this.state={err:null}}static getDerivedStateFromError(e){return{err:e}}render(){if(this.state.err)return(<div style={{padding:40,textAlign:"center",fontFamily:"Inter,sans-serif"}}><h2 style={{color:"#DC2626",marginBottom:12}}>Erro no sistema</h2><p style={{color:"#64748B",marginBottom:8}}>{String(this.state.err?.message||"")}</p><button onClick={()=>{try{localStorage.removeItem("booking-control-data")}catch{};window.location.reload()}} style={{padding:"9px 20px",borderRadius:8,border:"none",background:"#DC2626",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>Limpar e recarregar</button></div>);return this.props.children}}
 
 function Modal({onClose,children,wide}){
   return(<div style={{position:"fixed",inset:0,zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.25)",backdropFilter:"blur(3px)"}} onClick={onClose}>
@@ -232,9 +240,9 @@ function BookingDetail({req,onClose,onChangeStatus,onUpdate,onDelete,user}){
   </Modal>);
 }
 
-function NewPendenciaModal({onClose,onSave}){
-  const[bn,setBn]=useState("");const[obs,setObs]=useState("");
-  return(<Modal onClose={onClose}><h2 style={{color:"#B45309",fontSize:16,fontWeight:700,marginBottom:16}}>Nova Pendência</h2>
+function PendenciaModal({onClose,onSave,initial}){
+  const[bn,setBn]=useState(initial?.bookingNumber||"");const[obs,setObs]=useState(initial?.observation||"");
+  return(<Modal onClose={onClose}><h2 style={{color:"#B45309",fontSize:16,fontWeight:700,marginBottom:16}}>{initial?"Editar":"Nova"} Pendência</h2>
     <div style={{marginBottom:12}}><label style={lS}>Nº do Booking *</label><input value={bn} onChange={e=>setBn(e.target.value)} style={iS}/></div>
     <div style={{marginBottom:16}}><label style={lS}>O que está pendente? *</label><textarea value={obs} onChange={e=>setObs(e.target.value)} rows={3} style={{...iS,resize:"vertical"}}/></div>
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>{if(bn&&obs)onSave({bookingNumber:bn,observation:obs})}} style={{...bP,background:"#B45309",opacity:bn&&obs?1:.5}}>Adicionar</button></div>
@@ -366,16 +374,16 @@ function BookingsPanel({data,setData,armadores,user}){
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),1000);return()=>clearInterval(i)},[]);
   // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 5 days, trashed after 5 days
   useEffect(()=>{
-    const shouldClean=data.some(r=>isExp(r)||isEnvExp(r)||isTrashExp(r));
-    if(shouldClean)setData(prev=>prev.filter(r=>!isExp(r)&&!isEnvExp(r)&&!isTrashExp(r)));
+    const shouldClean=A(data).some(r=>isExp(r)||isEnvExp(r)||isTrashExp(r));
+    if(shouldClean)setData(prev=>A(prev).filter(r=>!isExp(r)&&!isEnvExp(r)&&!isTrashExp(r)));
   },[data]);
-  const active=data.filter(r=>!isTrashed(r));
+  const active=A(data).filter(r=>!isTrashed(r));
   const escC=active.filter(isEsc).length,urgC=active.filter(isUrg).length;
   const filt=filter==="Todos"?active:filter==="Escalonados"?active.filter(isEsc):filter==="Urgentes"?active.filter(isUrg):active.filter(r=>r.status===filter);
   const addReq=f=>{setData(prev=>[{id:`BK-${String(prev.length+1).padStart(3,"0")}`,status:"Solicitado",createdAt:Date.now(),updatedAt:Date.now(),createdBy:user.name,history:[],observations:[],...f},...prev]);setShowNew(false)};
-  const chgSt=(id,s)=>{setData(prev=>prev.map(r=>r.id===id?{...r,status:s,updatedAt:Date.now(),history:[...r.history,{from:r.status,to:s,at:Date.now(),by:user.name}]}:r));setSel(null)};
-  const updReq=(id,fields)=>{setData(prev=>prev.map(r=>r.id===id?{...r,...fields,updatedAt:Date.now()}:r));setSel(prev=>prev?{...prev,...fields}:prev)};
-  const delReq=id=>{setData(prev=>prev.map(r=>r.id===id?{...r,deletedAt:Date.now(),deletedBy:user.name}:r));setSel(null)};
+  const chgSt=(id,s)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,status:s,updatedAt:Date.now(),history:[...r.history,{from:r.status,to:s,at:Date.now(),by:user.name}]}:r));setSel(null)};
+  const updReq=(id,fields)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,...fields,updatedAt:Date.now()}:r));setSel(prev=>prev?{...prev,...fields}:prev)};
+  const delReq=id=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:Date.now(),deletedBy:user.name}:r));setSel(null)};
   return(<div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:16}}>
       {[{l:"Total",v:active.length,c:"#475569",bg:"#F8FAFC",bd:"#E2E8F0"},{l:"Solicitado",v:active.filter(r=>r.status==="Solicitado").length,c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A"},{l:"Urgentes",v:urgC,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"},{l:"Aprovado",v:active.filter(r=>r.status==="Aprovado").length,c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0"},{l:"Enviado ao cliente",v:active.filter(r=>r.status==="Enviado ao cliente").length,c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD"},{l:"Cancelado",v:active.filter(r=>r.status==="Cancelado").length,c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA"},{l:"Escalonado",v:escC,c:escC?"#DC2626":"#94A3B8",bg:escC?"#FEF2F2":"#F8FAFC",bd:escC?"#FECACA":"#E2E8F0"}].map((s,i)=>
@@ -410,8 +418,8 @@ function BookingsPanel({data,setData,armadores,user}){
 }
 
 function PendenciasPanel({data,setData,user}){
-  const[showNew,setShowNew]=useState(false);
-  const pending=data.filter(d=>!d.resolved),resolved=data.filter(d=>d.resolved);
+  const[showNew,setShowNew]=useState(false);const[editP,setEditP]=useState(null);const[selP,setSelP]=useState(null);const[cmt,setCmt]=useState("");
+  const pending=A(data).filter(d=>!d.resolved&&!d._deleted);const resolved=A(data).filter(d=>d.resolved&&!d._deleted);
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <div style={{display:"flex",gap:12}}>
@@ -421,13 +429,12 @@ function PendenciasPanel({data,setData,user}){
       <button onClick={()=>setShowNew(true)} style={{...bP,background:"#B45309",padding:"8px 16px",fontSize:11}}>+ Pendência</button>
     </div>
     <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>
-      {pending.map(p=><div key={p.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div><p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:"#B45309"}}>{p.bookingNumber}</span></p><p style={{fontSize:12,color:"#64748B",marginTop:2}}>{p.observation}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{p.createdBy} · {fDt(p.createdAt)}</p></div>
-        <button onClick={()=>setData(prev=>prev.map(x=>x.id===p.id?{...x,resolved:true}:x))} style={{padding:"6px 12px",borderRadius:6,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✓</button>
-      </div>)}
+      {pending.map(p=><div key={p.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:"#B45309"}}>{p.bookingNumber}</span></p><p style={{fontSize:12,color:"#64748B",marginTop:2}}>{p.observation}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{p.createdBy} · {fDt(p.createdAt)}</p>{A(p.comments).map((c,i)=><div key={i} style={{padding:"4px 8px",borderRadius:4,background:"#FFFBEB",marginTop:3}}><p style={{fontSize:11}}>{c.text}</p><p style={{fontSize:8,color:"#94A3B8"}}>{c.by} · {fDt(c.at)}</p></div>)}{selP===p.id&&<div style={{display:"flex",gap:4,marginTop:6}}><input value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="Comentário..." style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter"&&cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}]}:x));setCmt("")}}}/><button onClick={()=>{if(cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}]}:x));setCmt("")}}} style={{...bP,padding:"5px 10px",fontSize:10}}>+</button></div>}</div><div style={{display:"flex",gap:4,marginLeft:8}}><button onClick={()=>setSelP(selP===p.id?null:p.id)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>💬</button><button onClick={()=>setEditP(p)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:BRAND,fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>✏️</button><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:true,resolvedAt:Date.now(),resolvedBy:user.name}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✓</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div></div></div>)}
       {!pending.length&&<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma pendência</div>}
     </div>
-    {showNew&&<NewPendenciaModal onClose={()=>setShowNew(false)} onSave={f=>{setData(prev=>[{id:`PD-${Date.now()}`,...f,resolved:false,createdBy:user.name,createdAt:Date.now()},...prev]);setShowNew(false)}}/>}
+    {resolved.length>0&&<div style={{marginTop:12}}><p style={{...lS,marginBottom:6}}>Resolvidas</p><div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>{resolved.map(p=><div key={p.id} style={{padding:"10px 16px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",opacity:.7}}><div><p style={{fontSize:12,fontWeight:600}}>✓ BKG: {p.bookingNumber}</p><p style={{fontSize:11,color:"#64748B"}}>{p.observation}</p></div><div style={{display:"flex",gap:4}}><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:false}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>↩️</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div></div>)}</div></div>}
+    {showNew&&<PendenciaModal onClose={()=>setShowNew(false)} onSave={f=>{setData(prev=>[{id:`PD-${Date.now()}`,...f,resolved:false,createdBy:user.name,createdAt:Date.now(),comments:[]},...A(prev)]);setShowNew(false)}}/>}
+    {editP&&<PendenciaModal initial={editP} onClose={()=>setEditP(null)} onSave={f=>{setData(prev=>A(prev).map(x=>x.id===editP.id?{...x,...f}:x));setEditP(null)}}/>}
   </div>);
 }
 
@@ -435,9 +442,9 @@ function PendenciasPanel({data,setData,user}){
 // LIXEIRA (Trash — auto-purge after 5 days)
 // ═════════════════════════════════════════════
 function LixeiraPanel({data,setData}){
-  const trashed=data.filter(isTrashed);
-  const restore=id=>setData(prev=>prev.map(r=>r.id===id?{...r,deletedAt:undefined,deletedBy:undefined}:r));
-  const permDel=id=>{if(window.confirm("Apagar permanentemente? Não pode ser desfeito."))setData(prev=>prev.filter(r=>r.id!==id))};
+  const trashed=A(data).filter(isTrashed);
+  const restore=id=>setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:undefined,deletedBy:undefined}:r));
+  const permDel=id=>{if(window.confirm("Apagar permanentemente? Não pode ser desfeito."))setData(prev=>A(prev).filter(r=>r.id!==id))};
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <div style={{display:"flex",gap:12}}>
@@ -471,8 +478,8 @@ function StandbyPanel({ships,setShips,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[editShip,setEditShip]=useState(null);const[addBkgTo,setAddBkgTo]=useState(null);const[colArm,setColArm]=useState({});const[colShip,setColShip]=useState({});
   const arms=armadores.map(a=>a.name);
   const grouped=useMemo(()=>{const g={};arms.forEach(a=>{g[a]=ships.filter(s=>s.armador===a).map(s=>({...s,bookings:s.bookings||[]}))});return g},[ships,arms]);
-  const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?"))setShips(prev=>prev.filter(s=>s.id!==id))};
-  const delBkg=(shipId,bkgId)=>setShips(prev=>prev.map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).filter(b=>b.id!==bkgId)}:s));
+  const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?"))setShips(prev=>A(prev).filter(s=>s.id!==id))};
+  const delBkg=(shipId,bkgId)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).filter(b=>b.id!==bkgId)}:s));
 
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
@@ -561,8 +568,8 @@ function StandbyPanel({ships,setShips,armadores,user}){
       </div>)})}
     {arms.filter(a=>!grouped[a]?.length).length>0&&<p style={{color:"#CBD5E1",fontSize:11,textAlign:"center",marginTop:8}}>Sem navios: {arms.filter(a=>!grouped[a]?.length).join(", ")}</p>}
     {showNew&&<ShipModal onClose={()=>setShowNew(false)} onSave={f=>{setShips(prev=>[{id:`NV-${Date.now()}`,bookings:[],...f,createdBy:user.name,createdAt:Date.now()},...prev]);setShowNew(false)}} armadores={armadores}/>}
-    {editShip&&<ShipModal onClose={()=>setEditShip(null)} onSave={f=>{setShips(prev=>prev.map(s=>s.id===editShip.id?{...s,...f}:s));setEditShip(null)}} armadores={armadores} initial={editShip}/>}
-    {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{setShips(prev=>prev.map(s=>s.id===addBkgTo.id?{...s,bookings:[...s.bookings,{id:`SBK-${Date.now()}`,createdAt:Date.now(),...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo}/>}
+    {editShip&&<ShipModal onClose={()=>setEditShip(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===editShip.id?{...s,...f}:s));setEditShip(null)}} armadores={armadores} initial={editShip}/>}
+    {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===addBkgTo.id?{...s,bookings:[...s.bookings,{id:`SBK-${Date.now()}`,createdAt:Date.now(),...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo}/>}
   </div>);
 }
 
@@ -633,10 +640,10 @@ export default function App(){
     setTimeout(()=>setRefreshing(false),500);
   };
 
-  if(!user)return<Login onLogin={setUser} users={users} logo={logo}/>;
+  if(!user)return<ErrorBoundary><Login onLogin={setUser} users={users} logo={logo}/></ErrorBoundary>;
   const at=TABS.find(t=>t.id===tab);
 
-  return(
+  return(<ErrorBoundary>
     <div style={{minHeight:"100vh",background:"#F8F9FB",fontFamily:"'Inter',sans-serif",color:"#1E293B"}}>
       <style>{CSS}</style>
       <header style={{padding:"10px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #E2E8F0",background:"#fff",position:"sticky",top:0,zIndex:100,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
@@ -672,5 +679,5 @@ export default function App(){
       {showArm&&<ArmadorManager armadores={armadores} onSave={l=>{setArmadores(l);setShowArm(false)}} onClose={()=>setShowArm(false)}/>}
       {showLogo&&<LogoManager logo={logo} onSave={l=>{setLogo(l);setShowLogo(false)}} onClose={()=>setShowLogo(false)}/>}
     </div>
-  );
+  </ErrorBoundary>);
 }
