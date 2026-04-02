@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { loadState, saveState, subscribeToChanges, supabase } from "./lib/db.js";
 
-const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000;
+const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000,ONE_HOUR=3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
 const RU_PORTS=["saint petersburg","st petersburg","st. petersburg","novorossiysk"];
 const isRuPort=r=>{try{const p=((r?.pol||"")+(r?.pod||"")).toLowerCase();return RU_PORTS.some(rp=>p.includes(rp))}catch{return false}};
@@ -45,7 +45,7 @@ const isEsc=r=>{try{return(r.status==="Solicitado"||r.status==="Precisando de es
 const isUrg=r=>!!r.isUrgent;
 const slaR=r=>{try{if(!r||r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente")return null;return getSLA(r)-(Date.now()-(r.createdAt||0))}catch{return null}};
 const isExp=r=>r.status==="Aprovado"&&(Date.now()-r.updatedAt)>THREE_DAYS;
-const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>TWO_DAYS;
+const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>ONE_HOUR;
 const isTrashed=r=>!!r.deletedAt;
 const isTrashExp=r=>r.deletedAt&&(Date.now()-r.deletedAt)>FIVE_DAYS;
 const A=v=>Array.isArray(v)?v:[];
@@ -506,21 +506,23 @@ function Notifications({bookings,ships,armadores,notifPerm,onRequestPerm}){
 function BookingsPanel({data,setData,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[sel,setSel]=useState(null);const[filter,setFilter]=useState("Todos");const[tick,setTick]=useState(0);
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),1000);return()=>clearInterval(i)},[]);
-  // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 5 days, trashed after 5 days
+  // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 1h, trashed after 5 days
   useEffect(()=>{
     const shouldClean=A(data).some(r=>isExp(r)||isEnvExp(r)||isTrashExp(r));
     if(shouldClean)setData(prev=>A(prev).filter(r=>!isExp(r)&&!isEnvExp(r)&&!isTrashExp(r)));
   },[data]);
   const active=A(data).filter(r=>!isTrashed(r));
-  const escC=active.filter(isEsc).length,urgC=active.filter(isUrg).length;
-  const filt=filter==="Todos"?active:filter==="Escalonados"?active.filter(isEsc):filter==="Urgentes"?active.filter(isUrg):active.filter(r=>r.status===filter);
+  const activeNoEnv=active.filter(r=>r.status!=="Enviado ao cliente");
+  const escC=activeNoEnv.filter(isEsc).length,urgC=activeNoEnv.filter(isUrg).length;
+  const envCount=active.filter(r=>r.status==="Enviado ao cliente").length;
+  const filt=filter==="Todos"?activeNoEnv:filter==="Escalonados"?activeNoEnv.filter(isEsc):filter==="Urgentes"?activeNoEnv.filter(isUrg):filter==="Enviado ao cliente"?active.filter(r=>r.status==="Enviado ao cliente"):active.filter(r=>r.status===filter);
   const addReq=f=>{setData(prev=>[{id:`BK-${String(prev.length+1).padStart(3,"0")}`,status:"Solicitado",createdAt:Date.now(),updatedAt:Date.now(),createdBy:user.name,history:[],observations:[],...f},...prev]);setShowNew(false)};
   const chgSt=(id,s)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,status:s,updatedAt:Date.now(),history:[...r.history,{from:r.status,to:s,at:Date.now(),by:user.name}]}:r));setSel(null)};
   const updReq=(id,fields)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,...fields,updatedAt:Date.now()}:r));setSel(prev=>prev?{...prev,...fields}:prev)};
   const delReq=id=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:Date.now(),deletedBy:user.name}:r));setSel(null)};
   return(<div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:16}}>
-      {[{l:"Total",v:active.length,c:"#475569",bg:"#F8FAFC",bd:"#E2E8F0"},{l:"Solicitado",v:active.filter(r=>r.status==="Solicitado").length,c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A"},{l:"Urgentes",v:urgC,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"},{l:"Aprovado",v:active.filter(r=>r.status==="Aprovado").length,c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0"},{l:"Enviado ao cliente",v:active.filter(r=>r.status==="Enviado ao cliente").length,c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD"},{l:"Cancelado",v:active.filter(r=>r.status==="Cancelado").length,c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA"},{l:"Escalonado",v:escC,c:escC?"#DC2626":"#94A3B8",bg:escC?"#FEF2F2":"#F8FAFC",bd:escC?"#FECACA":"#E2E8F0"}].map((s,i)=>
+      {[{l:"Total",v:activeNoEnv.length,c:"#475569",bg:"#F8FAFC",bd:"#E2E8F0"},{l:"Solicitado",v:activeNoEnv.filter(r=>r.status==="Solicitado").length,c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A"},{l:"Urgentes",v:urgC,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"},{l:"Aprovado",v:activeNoEnv.filter(r=>r.status==="Aprovado").length,c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0"},{l:"Enviado ao cliente",v:envCount,c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD"},{l:"Cancelado",v:activeNoEnv.filter(r=>r.status==="Cancelado").length,c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA"},{l:"Escalonado",v:escC,c:escC?"#DC2626":"#94A3B8",bg:escC?"#FEF2F2":"#F8FAFC",bd:escC?"#FECACA":"#E2E8F0"}].map((s,i)=>
         <div key={i} onClick={()=>setFilter(s.l==="Total"?"Todos":s.l==="Escalonado"?"Escalonados":s.l)} style={{padding:"10px 6px",borderRadius:10,background:s.bg,border:`1px solid ${s.bd}`,textAlign:"center",cursor:"pointer",transition:"transform .15s"}} onMouseOver={e=>e.currentTarget.style.transform="translateY(-2px)"} onMouseOut={e=>e.currentTarget.style.transform="none"}><p style={{fontSize:18,fontWeight:700,color:s.c}}>{s.v}</p><p style={{color:"#94A3B8",fontSize:7,fontWeight:600,textTransform:"uppercase"}}>{s.l}</p></div>)}
     </div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
@@ -553,7 +555,15 @@ function BookingsPanel({data,setData,armadores,user}){
 
 function PendenciasPanel({data,setData,user}){
   const[showNew,setShowNew]=useState(false);const[editP,setEditP]=useState(null);const[selP,setSelP]=useState(null);const[cmt,setCmt]=useState("");
+  const[tick,setTick]=useState(0);
+  useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),30000);return()=>clearInterval(i)},[]);
+  // Auto-purge resolved after 1 hour
+  useEffect(()=>{
+    const shouldClean=A(data).some(d=>d.resolved&&!d._deleted&&d.resolvedAt&&(Date.now()-d.resolvedAt)>ONE_HOUR);
+    if(shouldClean)setData(prev=>A(prev).map(x=>(x.resolved&&!x._deleted&&x.resolvedAt&&(Date.now()-x.resolvedAt)>ONE_HOUR)?{...x,_deleted:true}:x));
+  },[data,tick]);
   const pending=A(data).filter(d=>!d.resolved&&!d._deleted);const resolved=A(data).filter(d=>d.resolved&&!d._deleted);
+  const fmtRemaining=(resolvedAt)=>{if(!resolvedAt)return"";const left=Math.max(0,ONE_HOUR-(Date.now()-resolvedAt));const m=Math.ceil(left/60000);return m>0?`${m}min restante${m>1?"s":""}`:""};
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <div style={{display:"flex",gap:12}}>
@@ -562,11 +572,18 @@ function PendenciasPanel({data,setData,user}){
       </div>
       <button onClick={()=>setShowNew(true)} style={{...bP,background:"#B45309",padding:"8px 16px",fontSize:11}}>+ Pendência</button>
     </div>
+    {/* Notification for recently resolved */}
+    {resolved.length>0&&<div style={{padding:"10px 14px",borderRadius:10,background:"#D1FAE5",border:"1px solid #A7F3D0",marginBottom:10,animation:"slideIn .4s"}}><p style={{color:"#047857",fontWeight:700,fontSize:12}}>✅ {resolved.length} pendência(s) resolvida(s) — serão removidas automaticamente em até 1h</p></div>}
     <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>
       {pending.map(p=><div key={p.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:"#B45309"}}>{p.bookingNumber}</span></p><p style={{fontSize:12,color:"#64748B",marginTop:2}}>{p.observation}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{p.createdBy} · {fDt(p.createdAt)}</p>{A(p.comments).map((c,i)=><div key={i} style={{padding:"4px 8px",borderRadius:4,background:"#FFFBEB",marginTop:3}}><p style={{fontSize:11}}>{c.text}</p><p style={{fontSize:8,color:"#94A3B8"}}>{c.by} · {fDt(c.at)}</p></div>)}{selP===p.id&&<div style={{display:"flex",gap:4,marginTop:6}}><input value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="Comentário..." style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter"&&cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}]}:x));setCmt("")}}}/><button onClick={()=>{if(cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}]}:x));setCmt("")}}} style={{...bP,padding:"5px 10px",fontSize:10}}>+</button></div>}</div><div style={{display:"flex",gap:4,marginLeft:8}}><button onClick={()=>setSelP(selP===p.id?null:p.id)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>💬</button><button onClick={()=>setEditP(p)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:BRAND,fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>✏️</button><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:true,resolvedAt:Date.now(),resolvedBy:user.name}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✓</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div></div></div>)}
       {!pending.length&&<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma pendência</div>}
     </div>
-    {resolved.length>0&&<div style={{marginTop:12}}><p style={{...lS,marginBottom:6}}>Resolvidas</p><div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>{resolved.map(p=><div key={p.id} style={{padding:"10px 16px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",opacity:.7}}><div><p style={{fontSize:12,fontWeight:600}}>✓ BKG: {p.bookingNumber}</p><p style={{fontSize:11,color:"#64748B"}}>{p.observation}</p></div><div style={{display:"flex",gap:4}}><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:false}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>↩️</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div></div>)}</div></div>}
+    {resolved.length>0&&<div style={{marginTop:12}}><p style={{...lS,marginBottom:6}}>Resolvidas (auto-exclusão em 1h)</p><div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>{resolved.map(p=>{const rem=fmtRemaining(p.resolvedAt);return(<div key={p.id} style={{padding:"10px 16px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",opacity:.7}}>
+      <div><p style={{fontSize:12,fontWeight:600}}>✓ BKG: {p.bookingNumber}</p><p style={{fontSize:11,color:"#64748B"}}>{p.observation}</p>
+        <p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>Resolvido por {p.resolvedBy||"—"} · {p.resolvedAt?fDt(p.resolvedAt):""}{rem?` · ⏱ ${rem}`:""}</p>
+      </div>
+      <div style={{display:"flex",gap:4}}><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:false,resolvedAt:undefined,resolvedBy:undefined}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>↩️</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div>
+    </div>)})}</div></div>}
     {showNew&&<PendenciaModal onClose={()=>setShowNew(false)} onSave={f=>{setData(prev=>[{id:`PD-${Date.now()}`,...f,resolved:false,createdBy:user.name,createdAt:Date.now(),comments:[]},...A(prev)]);setShowNew(false)}}/>}
     {editP&&<PendenciaModal initial={editP} onClose={()=>setEditP(null)} onSave={f=>{setData(prev=>A(prev).map(x=>x.id===editP.id?{...x,...f}:x));setEditP(null)}}/>}
   </div>);
