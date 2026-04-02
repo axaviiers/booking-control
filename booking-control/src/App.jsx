@@ -202,6 +202,10 @@ function NewBookingModal({onClose,onSave,armadores}){
 
 function BookingDetail({req,onClose,onChangeStatus,onUpdate,onDelete,user}){
   const[obsText,setObsText]=useState("");
+  const[editing,setEditing]=useState(false);
+  const[ef,setEf]=useState({client:req.client||"",clientRef:req.clientRef||"",subject:req.subject||"",emailSubject:req.emailSubject||"",bookingNumber:req.bookingNumber||"",equipQty:req.equipQty||1,equipType:req.equipType||EQ[0],pol:req.pol||"",pod:req.pod||"",armador:req.armador||"",navio:req.navio||"",dataSaida:req.dataSaida?String(req.dataSaida).split("T")[0]:"",isUrgent:!!req.isUrgent,urgentNote:req.urgentNote||""});
+  const es=(k,v)=>setEf(p=>({...p,[k]:v}));
+  const saveEdit=()=>{onUpdate(req.id,{...ef,dataSaida:ef.dataSaida||""});setEditing(false)};
   const addObs=()=>{if(!obsText.trim())return;onUpdate(req.id,{observations:[...(req.observations||[]),{text:obsText.trim(),by:user.name,at:Date.now()}]});setObsText("")};
   return(<Modal onClose={onClose} wide>
     <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
@@ -211,11 +215,47 @@ function BookingDetail({req,onClose,onChangeStatus,onUpdate,onDelete,user}){
           <span style={{padding:"2px 8px",borderRadius:16,fontSize:10,fontWeight:600,background:ST[req.status]?.bg,color:ST[req.status]?.c}}>{ST[req.status]?.i} {req.status}</span>
           {req.isUrgent&&<span style={{background:"#FEF2F2",color:"#DC2626",padding:"2px 8px",borderRadius:16,fontSize:10,fontWeight:700}}>🔴 URGENTE</span>}
         </div>
-        <h2 style={{fontSize:16,fontWeight:700}}>{req.subject}</h2>
-        {req.isUrgent&&req.urgentNote&&<p style={{color:"#DC2626",fontSize:11,marginTop:2}}>Motivo: {req.urgentNote}</p>}
+        <h2 style={{fontSize:16,fontWeight:700}}>{editing?ef.subject:req.subject}</h2>
+        {req.isUrgent&&req.urgentNote&&!editing&&<p style={{color:"#DC2626",fontSize:11,marginTop:2}}>Motivo: {req.urgentNote}</p>}
       </div>
-      <button onClick={onClose} style={{background:"none",border:"none",color:"#94A3B8",fontSize:18,cursor:"pointer"}}>✕</button>
+      <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+        {!editing&&<button onClick={()=>setEditing(true)} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${BRAND}30`,background:`${BRAND}08`,color:BRAND,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✏️ Editar</button>}
+        <button onClick={onClose} style={{background:"none",border:"none",color:"#94A3B8",fontSize:18,cursor:"pointer"}}>✕</button>
+      </div>
     </div>
+    {editing?<div style={{padding:16,borderRadius:10,background:"#F8FAFC",border:"1px solid #E2E8F0",marginBottom:12}}>
+      <p style={{color:BRAND,fontSize:11,fontWeight:700,textTransform:"uppercase",marginBottom:12}}>Editar Dados do Booking</p>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lS}>Cliente</label><input value={ef.client} onChange={e=>es("client",e.target.value)} style={iS}/></div>
+        <div><label style={lS}>Referência</label><input value={ef.clientRef} onChange={e=>es("clientRef",e.target.value)} style={iS}/></div>
+      </div>
+      <div style={{marginBottom:10}}><label style={lS}>Assunto</label><input value={ef.subject} onChange={e=>es("subject",e.target.value)} style={iS}/></div>
+      <div style={{marginBottom:10}}><label style={lS}>E-mail</label><input value={ef.emailSubject} onChange={e=>es("emailSubject",e.target.value)} style={iS}/></div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lS}>Nº Booking</label><input value={ef.bookingNumber} onChange={e=>es("bookingNumber",e.target.value)} style={iS}/></div>
+        <div><label style={lS}>Armador</label><input value={ef.armador} onChange={e=>es("armador",e.target.value)} style={iS}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"80px 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lS}>Qtd</label><input type="number" min={1} value={ef.equipQty} onChange={e=>es("equipQty",Math.max(1,parseInt(e.target.value)||1))} style={iS}/></div>
+        <div><label style={lS}>Equipamento</label><select value={ef.equipType} onChange={e=>es("equipType",e.target.value)} style={selS}>{EQ.map(t=><option key={t}>{t}</option>)}</select></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lS}>POL</label><input value={ef.pol} onChange={e=>es("pol",e.target.value)} style={iS}/></div>
+        <div><label style={lS}>POD</label><input value={ef.pod} onChange={e=>es("pod",e.target.value)} style={iS}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <div><label style={lS}>Navio</label><input value={ef.navio} onChange={e=>es("navio",e.target.value)} style={iS}/></div>
+        <div><label style={lS}>Data de Saída</label><input type="date" value={ef.dataSaida} onChange={e=>es("dataSaida",e.target.value)} style={iS}/></div>
+      </div>
+      <div style={{marginBottom:10,padding:10,borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA"}}>
+        <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:ef.isUrgent?8:0}}><input type="checkbox" checked={ef.isUrgent} onChange={e=>es("isUrgent",e.target.checked)} style={{width:16,height:16,accentColor:"#DC2626"}}/><span style={{color:"#DC2626",fontSize:13,fontWeight:600}}>🔴 URGENTE</span></label>
+        {ef.isUrgent&&<input value={ef.urgentNote} onChange={e=>es("urgentNote",e.target.value)} placeholder="Motivo..." style={{...iS,border:"1px solid #FECACA"}}/>}
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <button onClick={()=>setEditing(false)} style={{...bG,fontSize:12}}>Cancelar</button>
+        <button onClick={saveEdit} style={{...bP,fontSize:12}}>Salvar Alterações</button>
+      </div>
+    </div>:<>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:8}}>
       {[["Cliente",req.client],["Ref.",req.clientRef],["Booking",req.bookingNumber||"Pendente"],["Equip.",`${req.equipQty}x ${req.equipType}`],["Armador",req.armador],["E-mail",req.emailSubject],["Navio",req.navio],["Saída",req.dataSaida?fD(req.dataSaida):null]].map(([l,v],i)=><div key={i} style={{padding:"7px 10px",borderRadius:6,background:"#F8FAFC"}}><p style={{color:"#94A3B8",fontSize:9,textTransform:"uppercase"}}>{l}</p><p style={{color:"#334155",fontSize:12,fontWeight:500}}>{v||"—"}</p></div>)}
     </div>
@@ -223,6 +263,7 @@ function BookingDetail({req,onClose,onChangeStatus,onUpdate,onDelete,user}){
       <div style={{padding:"7px 10px",borderRadius:6,background:"#EFF6FF"}}><p style={{color:"#94A3B8",fontSize:9}}>POL</p><p style={{color:"#1D4ED8",fontSize:13,fontWeight:600}}>🚢 {req.pol}</p></div>
       <div style={{padding:"7px 10px",borderRadius:6,background:"#ECFDF5"}}><p style={{color:"#94A3B8",fontSize:9}}>POD</p><p style={{color:"#047857",fontSize:13,fontWeight:600}}>📍 {req.pod}</p></div>
     </div>
+    </>}
     {req.history?.length>0&&<div style={{marginBottom:8}}><p style={lS}>Histórico</p><div style={{background:"#F8FAFC",borderRadius:6,padding:6}}>{req.history.map((h,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:6,padding:"3px 0",fontSize:10,color:"#64748B"}}><span style={{fontWeight:600,minWidth:85}}>{fDt(h.at)}</span><span style={{padding:"1px 6px",borderRadius:10,background:ST[h.from]?.bg,color:ST[h.from]?.c,fontSize:9}}>{h.from}</span>→<span style={{padding:"1px 6px",borderRadius:10,background:ST[h.to]?.bg,color:ST[h.to]?.c,fontSize:9}}>{h.to}</span><span>{h.by}</span></div>)}</div></div>}
     <div style={{marginBottom:10}}><p style={lS}>Observações</p>
       {(req.observations||[]).map((o,i)=><div key={i} style={{padding:"6px 10px",borderRadius:6,background:"#FFFBEB",border:"1px solid #FEF3C7",marginBottom:3}}><p style={{fontSize:12}}>{o.text}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:1}}>{o.by} · {fDt(o.at)}</p></div>)}
@@ -345,6 +386,56 @@ function AddShipBookingModal({onClose,onSave,ship}){
     <div style={{marginBottom:16}}><label style={lS}>Observações</label><textarea value={f.observation} onChange={e=>s("observation",e.target.value)} rows={2} style={{...iS,resize:"vertical"}}/></div>
 
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>onSave(f)} style={{...bP,background:"#0F766E"}}>Adicionar Booking</button></div>
+  </Modal>);
+}
+
+function EditShipBookingModal({onClose,onSave,ship,booking}){
+  const[f,setF]=useState({
+    bookingNumber:booking.bookingNumber||"",
+    client:booking.client||"",
+    clientRef:booking.clientRef||"",
+    pol:booking.pol||ship.pol||"",
+    pod:booking.pod||ship.pod||"",
+    deadlineCarga:booking.deadlineCarga?String(booking.deadlineCarga).split("T")[0]:"",
+    qtdTotal:booking.qtdTotal||booking.qtdDisponivel||0,
+    qtdUsando:booking.qtdUsando||0,
+    equipQty:booking.equipQty||1,
+    equipType:booking.equipType||EQ[0],
+    reservas:booking.reservas||"",
+    observation:booking.observation||""
+  });
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  const sobra=f.qtdTotal-f.qtdUsando;
+  return(<Modal onClose={onClose} wide>
+    <h2 style={{color:"#0F766E",fontSize:16,fontWeight:700,marginBottom:4}}>Editar Booking — {ship.nome}</h2>
+    <p style={{color:"#64748B",fontSize:11,marginBottom:16}}>Armador: <strong style={{color:aC(ship.armador)}}>{ship.armador}</strong> · Saída: <strong>{fD(ship.previsaoSaida)}</strong></p>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+      <div><label style={lS}>Nº Booking</label><input value={f.bookingNumber} onChange={e=>s("bookingNumber",e.target.value)} style={iS}/></div>
+      <div><label style={lS}>Cliente</label><input value={f.client} onChange={e=>s("client",e.target.value)} style={iS}/></div>
+    </div>
+    <div style={{marginBottom:12}}><label style={lS}>Referência do Cliente</label><input value={f.clientRef} onChange={e=>s("clientRef",e.target.value)} style={iS}/></div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+      <div><label style={lS}>POL</label><input value={f.pol} onChange={e=>s("pol",e.target.value)} style={iS}/></div>
+      <div><label style={lS}>POD</label><input value={f.pod} onChange={e=>s("pod",e.target.value)} style={iS}/></div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+      <div style={{padding:12,borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA"}}><label style={{...lS,color:"#DC2626"}}>⏰ Deadline de Carga</label><input type="date" value={f.deadlineCarga} onChange={e=>s("deadlineCarga",e.target.value)} style={{...iS,border:"1px solid #FECACA"}}/></div>
+      <div style={{padding:12,borderRadius:8,background:"#F0FDFA",border:"1px solid #99F6E4"}}><label style={{...lS,color:"#0F766E"}}>🚢 Saída do Navio</label><p style={{fontSize:14,fontWeight:700,color:"#0F766E",padding:"9px 0"}}>{fD(ship.previsaoSaida)}</p></div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
+      <div><label style={lS}>Qtd Total</label><input type="number" min={0} value={f.qtdTotal} onChange={e=>s("qtdTotal",parseInt(e.target.value)||0)} style={iS}/></div>
+      <div><label style={lS}>Usando</label><input type="number" min={0} value={f.qtdUsando} onChange={e=>s("qtdUsando",parseInt(e.target.value)||0)} style={iS}/></div>
+      <div style={{padding:8,borderRadius:6,background:sobra>0?"#D1FAE5":"#FEF2F2",display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center"}}><p style={{fontSize:9,color:"#94A3B8",textTransform:"uppercase"}}>Sobrando</p><p style={{fontSize:18,fontWeight:700,color:sobra>0?"#047857":"#DC2626"}}>{sobra}</p></div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"80px 1fr",gap:12,marginBottom:12}}>
+      <div><label style={lS}>Qtd Equip.</label><input type="number" min={1} value={f.equipQty} onChange={e=>s("equipQty",Math.max(1,parseInt(e.target.value)||1))} style={iS}/></div>
+      <div><label style={lS}>Tipo de Equipamento</label><select value={f.equipType} onChange={e=>s("equipType",e.target.value)} style={selS}>{EQ.map(t=><option key={t}>{t}</option>)}</select></div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+      <div><label style={lS}>Reservas</label><input value={f.reservas} onChange={e=>s("reservas",e.target.value)} style={iS}/></div>
+    </div>
+    <div style={{marginBottom:16}}><label style={lS}>Observações</label><textarea value={f.observation} onChange={e=>s("observation",e.target.value)} rows={2} style={{...iS,resize:"vertical"}}/></div>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>onSave({...booking,...f,qtdDisponivel:f.qtdTotal})} style={{...bP,background:"#0F766E"}}>Salvar Alterações</button></div>
   </Modal>);
 }
 
@@ -476,10 +567,12 @@ function LixeiraPanel({data,setData}){
 
 function StandbyPanel({ships,setShips,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[editShip,setEditShip]=useState(null);const[addBkgTo,setAddBkgTo]=useState(null);const[colArm,setColArm]=useState({});const[colShip,setColShip]=useState({});
+  const[editBkg,setEditBkg]=useState(null);const[editBkgShip,setEditBkgShip]=useState(null);
   const arms=armadores.map(a=>a.name);
   const grouped=useMemo(()=>{const g={};arms.forEach(a=>{g[a]=ships.filter(s=>s.armador===a).map(s=>({...s,bookings:s.bookings||[]}))});return g},[ships,arms]);
   const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?"))setShips(prev=>A(prev).filter(s=>s.id!==id))};
   const delBkg=(shipId,bkgId)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).filter(b=>b.id!==bkgId)}:s));
+  const updBkg=(shipId,updatedBkg)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).map(b=>b.id===updatedBkg.id?{...b,...updatedBkg}:b)}:s));
 
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
@@ -511,6 +604,7 @@ function StandbyPanel({ships,setShips,armadores,user}){
         {!collapsed&&<div style={{border:`1px solid ${col}15`,borderTop:"none",borderRadius:"0 0 10px 10px",background:"#fff"}}>
           {armShips.map(ship=>{
             const bkgs=ship.bookings||[];
+            const cancelDays=dUntil(ship.dataCancelamento);const cancelAlert=armCfg?.ddlDays>0&&cancelDays!==null&&cancelDays>=0&&cancelDays<=armCfg.ddlDays;
             const sobra=bkgs.reduce((a,b)=>a+(b.qtdDisponivel||b.qtdTotal||0),0)-bkgs.reduce((a,b)=>a+(b.qtdUsando||0),0);const shipCol=colShip[ship.id];
             const shipDisp=bkgs.reduce((a,b)=>a+(b.qtdDisponivel||b.qtdTotal||0),0);const shipUso=bkgs.reduce((a,b)=>a+(b.qtdUsando||0),0);
             let sDdl=null;bkgs.forEach(b=>{if(b.deadlineCarga){const d=dUntil(b.deadlineCarga);if(d!==null&&d>=0&&(sDdl===null||d<sDdl))sDdl=d}});
@@ -548,7 +642,10 @@ function StandbyPanel({ships,setShips,armadores,user}){
                           {b.clientRef&&<span style={{fontSize:9,color:"#94A3B8",padding:"1px 6px",background:"#F1F5F9",borderRadius:4}}>Ref: {b.clientRef}</span>}
                           {bA&&<span style={{padding:"2px 8px",borderRadius:8,background:"#DC2626",color:"#fff",fontSize:9,fontWeight:700,animation:"pulse 1.5s ease infinite"}}>⏰ DDL {bD}d!</span>}
                         </div>
-                        <button onClick={()=>delBkg(ship.id,b.id)} style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:14,padding:"0 4px"}} title="Excluir booking">✕</button>
+                        <div style={{display:"flex",gap:4}}>
+                          <button onClick={()=>{setEditBkg(b);setEditBkgShip(ship)}} style={{background:"none",border:"none",color:BRAND,cursor:"pointer",fontSize:12,padding:"0 4px"}} title="Editar booking">✏️</button>
+                          <button onClick={()=>delBkg(ship.id,b.id)} style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:14,padding:"0 4px"}} title="Excluir booking">✕</button>
+                        </div>
                       </div>
                       {/* Info grid matching ship layout */}
                       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:4,marginBottom:6}}>
@@ -570,6 +667,7 @@ function StandbyPanel({ships,setShips,armadores,user}){
     {showNew&&<ShipModal onClose={()=>setShowNew(false)} onSave={f=>{setShips(prev=>[{id:`NV-${Date.now()}`,bookings:[],...f,createdBy:user.name,createdAt:Date.now()},...prev]);setShowNew(false)}} armadores={armadores}/>}
     {editShip&&<ShipModal onClose={()=>setEditShip(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===editShip.id?{...s,...f}:s));setEditShip(null)}} armadores={armadores} initial={editShip}/>}
     {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===addBkgTo.id?{...s,bookings:[...s.bookings,{id:`SBK-${Date.now()}`,createdAt:Date.now(),...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo}/>}
+    {editBkg&&editBkgShip&&<EditShipBookingModal onClose={()=>{setEditBkg(null);setEditBkgShip(null)}} onSave={f=>{updBkg(editBkgShip.id,f);setEditBkg(null);setEditBkgShip(null)}} ship={editBkgShip} booking={editBkg}/>}
   </div>);
 }
 
