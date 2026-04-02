@@ -39,7 +39,8 @@ const TABS=[
 const AClr={"MSC":"#1D4ED8","Maersk":"#0F766E","CMA CGM":"#B45309","Hapag-Lloyd":"#DC2626","COSCO":"#7C3AED","Evergreen":"#047857","ONE":"#BE185D","HMM":"#0369A1","Yang Ming":"#A16207","ZIM":"#6D28D9"};
 const aC=a=>AClr[a]||"#475569";
 const fT=ms=>{if(ms<=0)return"00:00:00";const h=Math.floor(ms/3600000),m=Math.floor((ms%3600000)/60000),s=Math.floor((ms%60000)/1000);return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`};
-const fD=ts=>ts?new Date(ts).toLocaleDateString("pt-BR"):"—";
+const pD=ts=>{if(!ts)return null;const s=String(ts);if(s.includes("T"))return new Date(s);return new Date(s+"T12:00:00")};
+const fD=ts=>ts?pD(ts).toLocaleDateString("pt-BR"):"—";
 const fDt=ts=>new Date(ts).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
 const isEsc=r=>{try{return(r.status==="Solicitado"||r.status==="Precisando de estratégia")&&(Date.now()-(r.createdAt||0))>getSLA(r)}catch{return false}};
 const isUrg=r=>!!r.isUrgent;
@@ -51,7 +52,7 @@ const isTrashExp=r=>r.deletedAt&&(Date.now()-r.deletedAt)>FIVE_DAYS;
 const A=v=>Array.isArray(v)?v:[];
 const armN=a=>typeof a==="string"?a:(a?.name||"");
 const armD=a=>typeof a==="object"?(a?.ddlDays||0):0;
-const dUntil=d=>{if(!d)return null;return Math.ceil((new Date(d).getTime()-Date.now())/86400000)};
+const dUntil=d=>{if(!d)return null;return Math.ceil((pD(d).getTime()-Date.now())/86400000)};
 
 const CSS=`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
@@ -349,9 +350,7 @@ function AddShipBookingModal({onClose,onSave,ship}){
     deadlineCarga:"",
     qtdTotal:first?.qtdTotal||0,
     qtdUsando:first?.qtdUsando||0,
-    equipQty:first?.equipQty||1,
-    equipType:first?.equipType||EQ[0],
-    reservas:first?.reservas||ship.reservas||"",
+    tipoCntr:first?.tipoCntr||"",
     observation:""
   });
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
@@ -361,25 +360,21 @@ function AddShipBookingModal({onClose,onSave,ship}){
     <p style={{color:"#64748B",fontSize:11,marginBottom:4}}>Armador: <strong style={{color:aC(ship.armador)}}>{ship.armador}</strong> · Saída: <strong>{fD(ship.previsaoSaida)}</strong>{first?" · Dados pré-preenchidos do 1º booking":""}</p>
     <p style={{color:"#94A3B8",fontSize:10,marginBottom:16}}>A data de saída segue a do navio. Preencha o Deadline de Carga deste booking.</p>
 
-    {/* Nº Booking + Cliente (como na tela do navio: Nome + Armador) */}
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
       <div><label style={lS}>Nº Booking *</label><input value={f.bookingNumber} onChange={e=>s("bookingNumber",e.target.value)} placeholder="Ex: MSCU1234567" style={iS}/></div>
       <div><label style={lS}>Cliente *</label><input value={f.client} onChange={e=>s("client",e.target.value)} style={iS}/></div>
     </div>
 
-    {/* Referência */}
     <div style={{marginBottom:12}}>
       <label style={lS}>Referência do Cliente</label>
       <input value={f.clientRef} onChange={e=>s("clientRef",e.target.value)} style={iS}/>
     </div>
 
-    {/* POL + POD */}
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
       <div><label style={lS}>POL *</label><input value={f.pol} onChange={e=>s("pol",e.target.value)} style={iS}/></div>
       <div><label style={lS}>POD *</label><input value={f.pod} onChange={e=>s("pod",e.target.value)} style={iS}/></div>
     </div>
 
-    {/* Deadline de Carga (substitui Cancelamento Reserva) */}
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
       <div style={{padding:12,borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA"}}>
         <label style={{...lS,color:"#DC2626"}}>⏰ Deadline de Carga *</label>
@@ -391,23 +386,13 @@ function AddShipBookingModal({onClose,onSave,ship}){
       </div>
     </div>
 
-    {/* Qtd Total + Usando + Sobrando */}
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
       <div><label style={lS}>Qtd Total</label><input type="number" min={0} value={f.qtdTotal} onChange={e=>s("qtdTotal",parseInt(e.target.value)||0)} style={iS}/></div>
       <div><label style={lS}>Usando</label><input type="number" min={0} value={f.qtdUsando} onChange={e=>s("qtdUsando",parseInt(e.target.value)||0)} style={iS}/></div>
       <div style={{padding:8,borderRadius:6,background:sobra>0?"#D1FAE5":"#FEF2F2",display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center"}}><p style={{fontSize:9,color:"#94A3B8",textTransform:"uppercase"}}>Sobrando</p><p style={{fontSize:18,fontWeight:700,color:sobra>0?"#047857":"#DC2626"}}>{sobra}</p></div>
     </div>
 
-    {/* Equipamento */}
-    <div style={{display:"grid",gridTemplateColumns:"80px 1fr",gap:12,marginBottom:12}}>
-      <div><label style={lS}>Qtd Equip.</label><input type="number" min={1} value={f.equipQty} onChange={e=>s("equipQty",Math.max(1,parseInt(e.target.value)||1))} style={iS}/></div>
-      <div><label style={lS}>Tipo de Equipamento</label><select value={f.equipType} onChange={e=>s("equipType",e.target.value)} style={selS}>{EQ.map(t=><option key={t}>{t}</option>)}</select></div>
-    </div>
-
-    {/* Reservas + Observações */}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-      <div><label style={lS}>Reservas</label><input value={f.reservas} onChange={e=>s("reservas",e.target.value)} style={iS}/></div>
-    </div>
+    <div style={{marginBottom:12}}><label style={lS}>Tipo de Container</label><input value={f.tipoCntr} onChange={e=>s("tipoCntr",e.target.value)} placeholder="Ex: 5X40" style={iS}/></div>
     <div style={{marginBottom:16}}><label style={lS}>Observações</label><textarea value={f.observation} onChange={e=>s("observation",e.target.value)} rows={2} style={{...iS,resize:"vertical"}}/></div>
 
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>onSave(f)} style={{...bP,background:"#0F766E"}}>Adicionar Booking</button></div>
@@ -424,9 +409,7 @@ function EditShipBookingModal({onClose,onSave,ship,booking}){
     deadlineCarga:booking.deadlineCarga?String(booking.deadlineCarga).split("T")[0]:"",
     qtdTotal:booking.qtdTotal||booking.qtdDisponivel||0,
     qtdUsando:booking.qtdUsando||0,
-    equipQty:booking.equipQty||1,
-    equipType:booking.equipType||EQ[0],
-    reservas:booking.reservas||"",
+    tipoCntr:booking.tipoCntr||(booking.equipType?(booking.equipQty?`${booking.equipQty}x${booking.equipType}`:booking.equipType):""),
     observation:booking.observation||""
   });
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
@@ -452,13 +435,7 @@ function EditShipBookingModal({onClose,onSave,ship,booking}){
       <div><label style={lS}>Usando</label><input type="number" min={0} value={f.qtdUsando} onChange={e=>s("qtdUsando",parseInt(e.target.value)||0)} style={iS}/></div>
       <div style={{padding:8,borderRadius:6,background:sobra>0?"#D1FAE5":"#FEF2F2",display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center"}}><p style={{fontSize:9,color:"#94A3B8",textTransform:"uppercase"}}>Sobrando</p><p style={{fontSize:18,fontWeight:700,color:sobra>0?"#047857":"#DC2626"}}>{sobra}</p></div>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"80px 1fr",gap:12,marginBottom:12}}>
-      <div><label style={lS}>Qtd Equip.</label><input type="number" min={1} value={f.equipQty} onChange={e=>s("equipQty",Math.max(1,parseInt(e.target.value)||1))} style={iS}/></div>
-      <div><label style={lS}>Tipo de Equipamento</label><select value={f.equipType} onChange={e=>s("equipType",e.target.value)} style={selS}>{EQ.map(t=><option key={t}>{t}</option>)}</select></div>
-    </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-      <div><label style={lS}>Reservas</label><input value={f.reservas} onChange={e=>s("reservas",e.target.value)} style={iS}/></div>
-    </div>
+    <div style={{marginBottom:12}}><label style={lS}>Tipo de Container</label><input value={f.tipoCntr} onChange={e=>s("tipoCntr",e.target.value)} placeholder="Ex: 5X40" style={iS}/></div>
     <div style={{marginBottom:16}}><label style={lS}>Observações</label><textarea value={f.observation} onChange={e=>s("observation",e.target.value)} rows={2} style={{...iS,resize:"vertical"}}/></div>
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>onSave({...booking,...f,qtdDisponivel:f.qtdTotal})} style={{...bP,background:"#0F766E"}}>Salvar Alterações</button></div>
   </Modal>);
@@ -629,17 +606,18 @@ function StandbyPanel({ships,setShips,armadores,setArmadores,user}){
   const[showNew,setShowNew]=useState(false);const[editShip,setEditShip]=useState(null);const[addBkgTo,setAddBkgTo]=useState(null);
   const[editBkg,setEditBkg]=useState(null);const[editBkgShip,setEditBkgShip]=useState(null);
   const addArmador=(newArm)=>{if(setArmadores)setArmadores(prev=>[...prev,newArm])};
-  const arms=armadores.map(a=>a.name);
+  const arms=useMemo(()=>armadores.map(a=>a.name),[armadores]);
   const armsWithShips=useMemo(()=>arms.filter(a=>ships.some(s=>s.armador===a)),[ships,arms]);
   const armsEmpty=useMemo(()=>arms.filter(a=>!ships.some(s=>s.armador===a)),[ships,arms]);
-  const[selArm,setSelArm]=useState(armsWithShips[0]||arms[0]||"");
-  useEffect(()=>{if(selArm&&!arms.includes(selArm)&&arms.length)setSelArm(arms[0])},[arms,selArm]);
-  // Auto-select first arm with ships if current has none
-  useEffect(()=>{if(armsWithShips.length&&!armsWithShips.includes(selArm))setSelArm(armsWithShips[0])},[armsWithShips]);
+  const[selArm,setSelArm]=useState(()=>armsWithShips[0]||arms[0]||"");
+  // Only auto-select if current armador was deleted from the list
+  useEffect(()=>{if(selArm&&arms.length&&!arms.includes(selArm))setSelArm(arms[0])},[arms,selArm]);
+  // If no arm selected yet, pick first with ships
+  useEffect(()=>{if(!selArm&&armsWithShips.length)setSelArm(armsWithShips[0])},[armsWithShips,selArm]);
 
   const armShips=useMemo(()=>ships.filter(s=>s.armador===selArm).map(s=>({...s,bookings:s.bookings||[]})).sort((a,b)=>{
-    const da=a.previsaoSaida?new Date(a.previsaoSaida).getTime():Infinity;
-    const db=b.previsaoSaida?new Date(b.previsaoSaida).getTime():Infinity;
+    const da=a.previsaoSaida?pD(a.previsaoSaida).getTime():Infinity;
+    const db=b.previsaoSaida?pD(b.previsaoSaida).getTime():Infinity;
     return da-db;
   }),[ships,selArm]);
   const armCfg=armadores.find(a=>a.name===selArm);
@@ -702,7 +680,7 @@ function StandbyPanel({ships,setShips,armadores,setArmadores,user}){
         const cancelDays=dUntil(ship.dataCancelamento);const cancelAlert=armCfg?.ddlDays>0&&cancelDays!==null&&cancelDays>=0&&cancelDays<=armCfg.ddlDays;
         let sDdl=null;bkgs.forEach(b=>{if(b.deadlineCarga){const d=dUntil(b.deadlineCarga);if(d!==null&&d>=0&&(sDdl===null||d<sDdl))sDdl=d}});
         const ddlAlert=armCfg?.ddlDays>0&&sDdl!==null&&sDdl<=armCfg.ddlDays;
-        const etdStr=ship.previsaoSaida?new Date(ship.previsaoSaida).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}):"—";
+        const etdStr=ship.previsaoSaida?pD(ship.previsaoSaida).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}):"—";
 
         return(<div key={ship.id} style={{borderBottom:`2px solid ${col}15`}}>
           {/* Ship header — like the green/blue row in Excel */}
@@ -726,16 +704,16 @@ function StandbyPanel({ships,setShips,armadores,setArmadores,user}){
           {bkgs.length>0?<div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",minWidth:1050}}>
               <thead><tr style={{background:`${col}CC`}}>
-                {["Booking","POL","POD","ETD","DDL Draft","Observações","Data Cancelamento","Inicial","Cliente","Usando","Sobra","",""].map((h,i)=>
+                {["Booking","POL","POD","ETD","DDL Draft","Observações","Data Cancelamento","Tipo Cntr","Cliente","Usando","Sobra","",""].map((h,i)=>
                   <th key={i} style={{...thS,background:h==="Data Cancelamento"?"#DC2626":h==="Usando"||h==="Sobra"?`${col}EE`:undefined,
-                    textAlign:h==="Usando"||h==="Sobra"||h==="Inicial"?"center":undefined}}>{h}</th>
+                    textAlign:h==="Usando"||h==="Sobra"||h==="Tipo Cntr"?"center":undefined}}>{h}</th>
                 )}
               </tr></thead>
               <tbody>{bkgs.map(b=>{
                 const bD=b.deadlineCarga?dUntil(b.deadlineCarga):null;
                 const bA=armCfg?.ddlDays>0&&bD!==null&&bD<=armCfg.ddlDays&&bD>=0;
                 const bSobra=(b.qtdDisponivel||b.qtdTotal||0)-(b.qtdUsando||0);
-                const cancelStr=ship.dataCancelamento?new Date(ship.dataCancelamento).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}):"—";
+                const cancelStr=ship.dataCancelamento?pD(ship.dataCancelamento).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}):"—";
                 return(<tr key={b.id} style={{background:bA?"#FEF2F2":"#fff",borderBottom:"1px solid #F1F5F9"}} onMouseOver={e=>e.currentTarget.style.background=bA?"#FEE2E2":"#F8FAFC"} onMouseOut={e=>e.currentTarget.style.background=bA?"#FEF2F2":"#fff"}>
                   <td style={{...tdS,fontWeight:700,color:col}}>{b.bookingNumber||"—"}</td>
                   <td style={{...tdS,fontWeight:600}}>{b.pol||ship.pol||"—"}</td>
@@ -744,7 +722,7 @@ function StandbyPanel({ships,setShips,armadores,setArmadores,user}){
                   <td style={{...tdS,color:bA?"#DC2626":"#64748B",fontWeight:bA?700:400}}>{b.deadlineCarga?fD(b.deadlineCarga):"—"}{bA?` (${bD}d!)`:""}</td>
                   <td style={{...tdS,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",color:"#64748B",fontSize:10}}>{b.observation||"—"}</td>
                   <td style={{...tdS,background:"#FEF2F220",color:"#DC2626",fontWeight:600,textAlign:"center"}}>{cancelStr}{cancelAlert?` (${cancelDays}d!)`:""}</td>
-                  <td style={{...tdS,textAlign:"center",fontWeight:600}}>{b.equipQty||0}x{b.equipType?.replace("Dry ","").replace("Reefer ","R").replace("Open Top ","OT").replace("Flat Rack ","FR")||"40"}</td>
+                  <td style={{...tdS,textAlign:"center",fontWeight:600}}>{b.tipoCntr||(b.equipQty?`${b.equipQty}x${b.equipType||""}`:"")||"—"}</td>
                   <td style={{...tdS,fontWeight:500}}>{b.client||"—"}</td>
                   <td style={{...tdS,textAlign:"center",fontWeight:700,background:"#D1FAE520",color:"#047857"}}>{b.qtdUsando||""}</td>
                   <td style={{...tdS,textAlign:"center",fontWeight:700,background:bSobra>0?"#FEF3C720":"#FEE2E220",color:bSobra>0?"#B45309":"#DC2626"}}>{bSobra||""}</td>
@@ -951,3 +929,4 @@ export default function App(){
     </div>
   </ErrorBoundary>);
 }
+
