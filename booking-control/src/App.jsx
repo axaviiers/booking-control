@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { loadState, saveState, subscribeToChanges, supabase } from "./lib/db.js";
+import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups } from "./lib/db.js";
 
 const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000,ONE_HOUR=3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
@@ -13,6 +13,7 @@ const ST={
   Aprovado:{c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0",i:"✅"},
   Cancelado:{c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA",i:"🚫"},
   "Enviado ao cliente":{c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD",i:"📤"},
+  "Em processo de transferência":{c:"#9333EA",bg:"#F3E8FF",bd:"#E9D5FF",i:"🔄"},
 };
 const EQ=["Dry 20'","Dry 40'","Dry 40' HC","Reefer 20'","Reefer 40'","Reefer 40' HC","Open Top 20'","Open Top 40'","Flat Rack 20'","Flat Rack 40'","Tank 20'"];
 const ARM_DEF=[
@@ -44,7 +45,7 @@ const fD=ts=>ts?pD(ts).toLocaleDateString("pt-BR"):"—";
 const fDt=ts=>new Date(ts).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
 const isEsc=r=>{try{return(r.status==="Solicitado"||r.status==="Precisando de estratégia")&&(Date.now()-(r.createdAt||0))>getSLA(r)}catch{return false}};
 const isUrg=r=>!!r.isUrgent;
-const slaR=r=>{try{if(!r||r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente")return null;return getSLA(r)-(Date.now()-(r.createdAt||0))}catch{return null}};
+const slaR=r=>{try{if(!r||r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente"||r.status==="Em processo de transferência")return null;return getSLA(r)-(Date.now()-(r.createdAt||0))}catch{return null}};
 const isExp=r=>r.status==="Aprovado"&&(Date.now()-r.updatedAt)>THREE_DAYS;
 const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>ONE_HOUR;
 const isTrashed=r=>!!r.deletedAt;
@@ -503,8 +504,40 @@ function BookingsPanel({data,setData,armadores,user}){
         <div key={i} onClick={()=>setFilter(s.l==="Total"?"Todos":s.l==="Escalonado"?"Escalonados":s.l)} style={{padding:"10px 6px",borderRadius:10,background:s.bg,border:`1px solid ${s.bd}`,textAlign:"center",cursor:"pointer",transition:"transform .15s"}} onMouseOver={e=>e.currentTarget.style.transform="translateY(-2px)"} onMouseOut={e=>e.currentTarget.style.transform="none"}><p style={{fontSize:18,fontWeight:700,color:s.c}}>{s.v}</p><p style={{color:"#94A3B8",fontSize:7,fontWeight:600,textTransform:"uppercase"}}>{s.l}</p></div>)}
     </div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>{["Todos","Solicitado","Precisando de estratégia","Aguardando contrato","Urgentes","Aprovado","Enviado ao cliente","Cancelado","Escalonados"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"4px 8px",borderRadius:6,border:filter===f?"none":"1px solid #E2E8F0",background:filter===f?BRAND_LT:"#fff",color:filter===f?BRAND:"#64748B",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{f}</button>)}</div>
-      <button onClick={()=>setShowNew(true)} style={{...bP,padding:"7px 16px",fontSize:11}}>+ Novo Booking</button>
+      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>{["Todos","Solicitado","Precisando de estratégia","Aguardando contrato","Urgentes","Aprovado","Em processo de transferência","Enviado ao cliente","Cancelado","Escalonados"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"4px 8px",borderRadius:6,border:filter===f?"none":"1px solid #E2E8F0",background:filter===f?BRAND_LT:"#fff",color:filter===f?BRAND:"#64748B",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{f}</button>)}</div>
+      <div style={{display:"flex",gap:6}}>
+        <button onClick={()=>{
+          const list=active.filter(r=>r.status!=="Cancelado");
+          if(!list.length){alert("Nenhuma reserva ativa para relatar.");return}
+          const byStatus={};
+          list.forEach(r=>{const k=r.status||"—";(byStatus[k]=byStatus[k]||[]).push(r)});
+          const today=new Date().toLocaleDateString("pt-BR");
+          let txt=`*📦 RELATÓRIO DE BOOKINGS*\n_Inter Shipping — ${today}_\n_Total: ${list.length} reserva(s)_\n`;
+          Object.keys(ST).forEach(st=>{
+            const items=byStatus[st];if(!items||!items.length)return;
+            txt+=`\n*${ST[st].i} ${st.toUpperCase()} (${items.length})*\n`;
+            items.forEach(r=>{
+              txt+=`\n• *${r.id}* — ${r.client||"—"}`;
+              if(r.clientRef)txt+=` (Ref: ${r.clientRef})`;
+              txt+=`\n  ${r.equipQty}x ${r.equipType} • ${r.armador||"—"}`;
+              txt+=`\n  ${r.pol||"—"} → ${r.pod||"—"}`;
+              if(r.bookingNumber)txt+=`\n  Booking: ${r.bookingNumber}`;
+              if(r.navio)txt+=`\n  Navio: ${r.navio}`;
+              if(r.dataSaida)txt+=` • Saída: ${fD(r.dataSaida)}`;
+              if(r.isUrgent)txt+=`\n  🔴 URGENTE${r.urgentNote?`: ${r.urgentNote}`:""}`;
+              txt+=`\n`;
+            });
+          });
+          txt+=`\n_Gerado por ${user.name} • ${new Date().toLocaleString("pt-BR")}_`;
+          // Copia pro clipboard como garantia (relatórios longos podem estourar URL do WhatsApp)
+          try{navigator.clipboard?.writeText(txt)}catch{}
+          const url=`https://wa.me/?text=${encodeURIComponent(txt)}`;
+          window.open(url,"_blank","noopener");
+        }} style={{...bG,padding:"7px 14px",fontSize:11,display:"flex",alignItems:"center",gap:5,borderColor:"#25D366",color:"#128C7E",fontWeight:600}} title="Gerar relatório de todas as reservas e enviar por WhatsApp (texto também copiado para a área de transferência)">
+          💬 Relatório WhatsApp
+        </button>
+        <button onClick={()=>setShowNew(true)} style={{...bP,padding:"7px 16px",fontSize:11}}>+ Novo Booking</button>
+      </div>
     </div>
     <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:1000}}>
       <thead><tr style={{borderBottom:"2px solid #F1F5F9",background:"#FAFBFC"}}>{["","ID","Cliente","Assunto","Booking","Equip.","Rota","Navio","Armador","Status","SLA",""].map((h,i)=><th key={i} style={{padding:"10px 4px",textAlign:"left",color:"#94A3B8",fontSize:8,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
@@ -748,62 +781,184 @@ function StandbyPanel({ships,setShips,armadores,setArmadores,user}){
 }
 
 // ═════════════════════════════════════════════
+// BACKUP RECOVERY — rede de segurança local
+// ═════════════════════════════════════════════
+function BackupRecovery({onClose,onRestore}){
+  const[list,setList]=useState([]);
+  useEffect(()=>{setList(listLocalBackups()||[])},[]);
+  return(<Modal onClose={onClose} wide>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+      <div>
+        <h2 style={{fontSize:17,fontWeight:700}}>💾 Recuperação de Backups</h2>
+        <p style={{color:"#94A3B8",fontSize:12,marginTop:4}}>Snapshots locais automáticos — use se notar dados sumindo</p>
+      </div>
+      <button onClick={onClose} style={{background:"none",border:"none",color:"#94A3B8",fontSize:18,cursor:"pointer"}}>✕</button>
+    </div>
+    <div style={{padding:12,borderRadius:8,background:"#FEF3C7",border:"1px solid #FDE68A",marginBottom:16}}>
+      <p style={{fontSize:11,color:"#92400E"}}><strong>ℹ️ Como funciona:</strong> O sistema guarda automaticamente os 10 snapshots mais recentes no seu navegador. Se você perceber que dados sumiram, pode restaurar um snapshot anterior aqui. Ao restaurar, o estado atual também é salvo como backup (você pode desfazer).</p>
+    </div>
+    {list.length===0?<div style={{padding:40,textAlign:"center",color:"#94A3B8",fontSize:13}}>Nenhum backup disponível ainda.<br/><span style={{fontSize:11}}>Os backups são criados automaticamente enquanto você usa o sistema.</span></div>:
+    <div style={{maxHeight:400,overflowY:"auto"}}>
+      {list.map((b,i)=><div key={i} style={{padding:"12px 14px",borderRadius:8,background:i===0?"#F0FDF4":"#F8FAFC",border:`1px solid ${i===0?"#BBF7D0":"#E2E8F0"}`,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <p style={{fontSize:12,fontWeight:700,color:i===0?"#047857":"#1E293B"}}>
+            {i===0&&"🟢 "}{new Date(b.at).toLocaleString("pt-BR")}
+            {i===0&&<span style={{marginLeft:6,fontSize:9,color:"#047857"}}>(mais recente)</span>}
+          </p>
+          <p style={{fontSize:10,color:"#64748B",marginTop:3}}>
+            📦 {b.bookings||0} bookings · ⚠️ {b.pendencias||0} pendências · 🚢 {b.ships||0} navios
+          </p>
+        </div>
+        <button onClick={()=>onRestore(b.state)} style={{padding:"6px 14px",borderRadius:6,border:"1px solid #BFDBFE",background:"#DBEAFE",color:"#1D4ED8",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>♻️ Restaurar</button>
+      </div>)}
+    </div>}
+    <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}>
+      <button onClick={onClose} style={bG}>Fechar</button>
+    </div>
+  </Modal>);
+}
+
+// ═════════════════════════════════════════════
 // MAIN — Supabase realtime + fallback local
 // ═════════════════════════════════════════════
 export default function App(){
   const[user,setUser]=useState(null);const[tab,setTab]=useState("bookings");const[loaded,setLoaded]=useState(false);
   const[bookings,setBookings]=useState([]);const[pendencias,setPendencias]=useState([]);const[ships,setShips]=useState([]);
   const[users,setUsers]=useState(USR_DEF);const[armadores,setArmadores]=useState(ARM_DEF);const[logo,setLogo]=useState(null);
-  const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);
+  const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);const[showBackups,setShowBackups]=useState(false);
   const[refreshing,setRefreshing]=useState(false);const[online,setOnline]=useState(!!supabase);
 
-  const applyState=useCallback((d)=>{
-    if(d.bookings)setBookings(d.bookings);
-    if(d.pendencias)setPendencias(d.pendencias);
-    if(d.ships)setShips(d.ships.map(s=>({...s,bookings:s.bookings||[]})));
-    const merged=[...(d.users||[])];
-    USR_DEF.forEach(def=>{if(!merged.find(u=>u.username===def.username))merged.push(def)});
-    setUsers(merged);
+  // Flag: quando true, o próximo render NÃO deve disparar save
+  // (o estado veio do remoto — evita eco de gravação).
+  const applyingRemoteRef=useRef(false);
+  const[saveStatus,setSaveStatus]=useState("idle"); // idle | saving | ok | error
+  const[lastSavedAt,setLastSavedAt]=useState(null);
+
+  // Dedupe por id (mantém o mais recente por updatedAt)
+  const dedupeById=(arr)=>{
+    const m=new Map();
+    (arr||[]).forEach(it=>{
+      if(!it||!it.id)return;
+      const prev=m.get(it.id);
+      if(!prev){m.set(it.id,it);return}
+      const pu=prev.updatedAt||prev.createdAt||0;
+      const nu=it.updatedAt||it.createdAt||0;
+      if(nu>=pu)m.set(it.id,it);
+    });
+    return Array.from(m.values());
+  };
+
+  // Merge: combina local + novo por id. Nunca substitui cegamente.
+  const mergeArr=(localArr,newArr)=>{
+    if(!newArr)return localArr;
+    return dedupeById([...(localArr||[]),...(newArr||[])]);
+  };
+
+  const applyState=useCallback((d,fromRemote=false)=>{
+    if(fromRemote)applyingRemoteRef.current=true;
+    if(d.bookings)  setBookings(prev=>mergeArr(prev,d.bookings));
+    if(d.pendencias)setPendencias(prev=>mergeArr(prev,d.pendencias));
+    if(d.ships)     setShips(prev=>mergeArr(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
+    if(d.users){
+      const merged=[...(d.users||[])];
+      USR_DEF.forEach(def=>{if(!merged.find(u=>u.username===def.username))merged.push(def)});
+      setUsers(merged);
+    }
     if(d.armadores?.length)setArmadores(d.armadores);
     if(d.logo!==undefined)setLogo(d.logo);
+    // Solta o flag após o ciclo de render
+    if(fromRemote)setTimeout(()=>{applyingRemoteRef.current=false},80);
   },[]);
 
-  // LOAD
+  // LOAD inicial (usa substituição, não merge — é o primeiro estado)
   useEffect(()=>{(async()=>{
     if(supabase){
       const d=await loadState();
-      if(d&&Object.keys(d).length>0)applyState(d);
+      if(d&&Object.keys(d).length>0){
+        applyingRemoteRef.current=true;
+        if(d.bookings)  setBookings(dedupeById(d.bookings));
+        if(d.pendencias)setPendencias(dedupeById(d.pendencias));
+        if(d.ships)     setShips(dedupeById(d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
+        const u=[...(d.users||[])];
+        USR_DEF.forEach(def=>{if(!u.find(x=>x.username===def.username))u.push(def)});
+        if(u.length)setUsers(u);
+        if(d.armadores?.length)setArmadores(d.armadores);
+        if(d.logo!==undefined)setLogo(d.logo);
+        setTimeout(()=>{applyingRemoteRef.current=false},80);
+      }
       setOnline(true);
     }else{
-      try{const raw=localStorage.getItem("booking-control-data");if(raw)applyState(JSON.parse(raw))}catch{}
+      try{
+        const raw=localStorage.getItem("booking-control-data");
+        if(raw){
+          const d=JSON.parse(raw);
+          applyingRemoteRef.current=true;
+          if(d.bookings)setBookings(dedupeById(d.bookings));
+          if(d.pendencias)setPendencias(dedupeById(d.pendencias));
+          if(d.ships)setShips(dedupeById(d.ships));
+          if(d.users?.length)setUsers(d.users);
+          if(d.armadores?.length)setArmadores(d.armadores);
+          if(d.logo!==undefined)setLogo(d.logo);
+          setTimeout(()=>{applyingRemoteRef.current=false},80);
+        }
+      }catch{}
     }
     setLoaded(true);
-  })()},[applyState]);
+  })()},[]);
 
-  const lastLocalChange=useRef(0);
   const saveRef=useRef(null);
+  const backupRef=useRef(0);
 
-  // SAVE on any change — debounced 400ms to batch rapid changes
+  // SAVE on change — pula se o estado veio do remoto (evita eco).
   useEffect(()=>{
     if(!loaded)return;
-    lastLocalChange.current=Date.now();
-    const state={bookings,pendencias,ships,users,armadores,logo};
+    if(applyingRemoteRef.current)return; // ← crítico: sem eco
+    const cleanBookings=dedupeById(bookings);
+    const cleanPendencias=dedupeById(pendencias);
+    const cleanShips=dedupeById(ships);
+    const state={bookings:cleanBookings,pendencias:cleanPendencias,ships:cleanShips,users,armadores,logo};
+    // Salvamento local imediato (não-bloqueante)
     try{localStorage.setItem("booking-control-data",JSON.stringify(state))}catch(e){console.warn("localStorage save failed",e)}
+    // Backup rotativo a cada 2 minutos de atividade
+    if(Date.now()-backupRef.current>120000){
+      backupRef.current=Date.now();
+      pushLocalBackup(state);
+    }
+    // Salvamento remoto com debounce
     if(supabase&&user){
+      setSaveStatus("saving");
       if(saveRef.current)clearTimeout(saveRef.current);
-      saveRef.current=setTimeout(()=>{
-        try{saveState(state,user.name).catch(e=>console.warn("Supabase save error",e))}catch(e){console.warn("Save error",e)}
-      },400);
+      saveRef.current=setTimeout(async()=>{
+        try{
+          const res=await saveState(state,user.name);
+          if(res&&res.ok){
+            setSaveStatus("ok");
+            setLastSavedAt(Date.now());
+            // Se o merge no servidor trouxe dados de outros usuários, aplica de volta
+            if(res.data){
+              applyingRemoteRef.current=true;
+              if(res.data.bookings)  setBookings(dedupeById(res.data.bookings));
+              if(res.data.pendencias)setPendencias(dedupeById(res.data.pendencias));
+              if(res.data.ships)     setShips(dedupeById(res.data.ships));
+              setTimeout(()=>{applyingRemoteRef.current=false},80);
+            }
+          }else{
+            setSaveStatus("error");
+            console.warn("Supabase save failed:",res?.reason);
+          }
+        }catch(e){
+          setSaveStatus("error");
+          console.warn("Save error",e);
+        }
+      },500);
     }
   },[bookings,pendencias,ships,users,armadores,logo,loaded]);
 
-  // REALTIME subscription — ignore updates within 4s of local change
+  // REALTIME — sempre aplica (merge cuida da consistência, sem janela de 4s)
   useEffect(()=>{
     if(!supabase)return;
     const unsub=subscribeToChanges((newData)=>{
-      if(Date.now()-lastLocalChange.current>4000){
-        try{applyState(newData)}catch(e){console.warn("Apply state error",e)}
-      }
+      try{applyState(newData,true)}catch(e){console.warn("Apply state error",e)}
     });
     return unsub;
   },[applyState]);
@@ -901,7 +1056,11 @@ export default function App(){
           <div><h1 style={{fontSize:14,fontWeight:700,color:BRAND}}>Inter Shipping</h1><p style={{fontSize:9,color:"#94A3B8"}}>Booking Control{online?" · 🟢 Online":" · 🟡 Local"}</p></div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:4,padding:"4px 8px",borderRadius:6,background:saveStatus==="error"?"#FEF2F2":saveStatus==="saving"?"#FEF3C7":"#F0FDF4",border:`1px solid ${saveStatus==="error"?"#FECACA":saveStatus==="saving"?"#FDE68A":"#BBF7D0"}`,fontSize:9,fontWeight:600,color:saveStatus==="error"?"#DC2626":saveStatus==="saving"?"#B45309":"#047857"}} title={lastSavedAt?`Último salvamento: ${new Date(lastSavedAt).toLocaleTimeString("pt-BR")}`:"Aguardando alterações"}>
+            {saveStatus==="saving"?"💾 Salvando...":saveStatus==="error"?"⚠ Erro ao salvar":saveStatus==="ok"?`✓ Salvo${lastSavedAt?" "+new Date(lastSavedAt).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):""}`:"· Pronto"}
+          </div>
           <button onClick={refresh} style={{...bG,padding:"6px 10px",fontSize:11,display:"flex",alignItems:"center",gap:4}}><span style={{display:"inline-block",animation:refreshing?"spin .6s linear infinite":"none",fontSize:12}}>🔄</span></button>
+          {user.role==="gerencia"&&<button onClick={()=>setShowBackups(true)} style={{...bG,padding:"6px 10px",fontSize:11}} title="Backups locais (recuperação de dados)">💾</button>}
           {user.role==="gerencia"&&<button onClick={()=>setShowUsers(true)} style={{...bG,padding:"6px 10px",fontSize:11}}>👥</button>}
           <button onClick={()=>setShowArm(true)} style={{...bG,padding:"6px 10px",fontSize:11}}>⚓</button>
           <button onClick={()=>setShowLogo(true)} style={{...bG,padding:"6px 10px",fontSize:11}}>📷</button>
@@ -926,6 +1085,19 @@ export default function App(){
       {showUsers&&<UserManager users={users} onSave={l=>{setUsers(l);setShowUsers(false)}} onClose={()=>setShowUsers(false)}/>}
       {showArm&&<ArmadorManager armadores={armadores} onSave={l=>{setArmadores(l);setShowArm(false)}} onClose={()=>setShowArm(false)}/>}
       {showLogo&&<LogoManager logo={logo} onSave={l=>{setLogo(l);setShowLogo(false)}} onClose={()=>setShowLogo(false)}/>}
+      {showBackups&&<BackupRecovery onClose={()=>setShowBackups(false)} onRestore={(s)=>{
+        if(!window.confirm("Restaurar este backup? O estado atual será substituído (uma cópia de segurança do estado atual é feita automaticamente)."))return;
+        // Salva snapshot do estado atual antes de restaurar
+        pushLocalBackup({bookings,pendencias,ships,users,armadores,logo});
+        applyingRemoteRef.current=true;
+        if(s.bookings)setBookings(dedupeById(s.bookings));
+        if(s.pendencias)setPendencias(dedupeById(s.pendencias));
+        if(s.ships)setShips(dedupeById(s.ships));
+        if(s.users?.length)setUsers(s.users);
+        if(s.armadores?.length)setArmadores(s.armadores);
+        if(s.logo!==undefined)setLogo(s.logo);
+        setTimeout(()=>{applyingRemoteRef.current=false;setShowBackups(false);alert("Backup restaurado. As alterações serão sincronizadas em instantes.")},100);
+      }}/>}
     </div>
   </ErrorBoundary>);
 }
