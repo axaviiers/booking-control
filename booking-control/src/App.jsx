@@ -17,8 +17,8 @@ const ST={
 };
 const EQ=["Dry 20'","Dry 40'","Dry 40' HC","Reefer 20'","Reefer 40'","Reefer 40' HC","Open Top 20'","Open Top 40'","Flat Rack 20'","Flat Rack 40'","Tank 20'"];
 const ARM_DEF=[
-  {name:"MSC",ddlDays:0},{name:"Maersk",ddlDays:0},{name:"CMA CGM",ddlDays:12},{name:"Hapag-Lloyd",ddlDays:16},
-  {name:"COSCO",ddlDays:0},{name:"Evergreen",ddlDays:0},{name:"ONE",ddlDays:0},{name:"HMM",ddlDays:0},{name:"Yang Ming",ddlDays:0},{name:"ZIM",ddlDays:0},
+  {name:"MSC",ddlDays:0,cancelRef:"DDL"},{name:"Maersk",ddlDays:0,cancelRef:"DDL"},{name:"CMA CGM",ddlDays:12,cancelRef:"DDL"},{name:"Hapag-Lloyd",ddlDays:16,cancelRef:"DDL"},
+  {name:"COSCO",ddlDays:0,cancelRef:"DDL"},{name:"Evergreen",ddlDays:0,cancelRef:"DDL"},{name:"ONE",ddlDays:0,cancelRef:"DDL"},{name:"HMM",ddlDays:0,cancelRef:"DDL"},{name:"Yang Ming",ddlDays:0,cancelRef:"DDL"},{name:"ZIM",ddlDays:0,cancelRef:"DDL"},
 ];
 const USR_DEF=[
   {id:"u1",username:"alessandra.xavier@intershipping.com.br",password:"AlessandraX25@",role:"gerencia",name:"Alessandra Xavier"},
@@ -54,6 +54,28 @@ const A=v=>Array.isArray(v)?v:[];
 const armN=a=>typeof a==="string"?a:(a?.name||"");
 const armD=a=>typeof a==="object"?(a?.ddlDays||0):0;
 const dUntil=d=>{if(!d)return null;return Math.ceil((pD(d).getTime()-Date.now())/86400000)};
+
+// Calcula a data de cancelamento de uma reserva stand-by a partir da regra do armador.
+// Retorna {date: Date|null, error: string|null, ref: "DDL"|"ETD", daysBefore: number}
+// Regra: o armador define se conta do DDL de Carga (mais antigo entre os bookings) ou da ETD do navio.
+const computeCancelDate=(ship,armadorObj)=>{
+  if(!armadorObj)return{date:null,error:"Armador não cadastrado",ref:"DDL",daysBefore:0};
+  const ref=armadorObj.cancelRef||"DDL";
+  const daysBefore=armadorObj.ddlDays||0;
+  if(ref==="ETD"){
+    if(!ship?.previsaoSaida)return{date:null,error:"Informe a data de saída (ETD) do navio",ref,daysBefore};
+    const t=pD(ship.previsaoSaida).getTime()-daysBefore*86400000;
+    return{date:new Date(t),error:null,ref,daysBefore};
+  }
+  // DDL: usa o deadline de carga mais antigo entre os bookings do navio
+  const bkgs=ship?.bookings||[];
+  const ddls=bkgs.map(b=>b?.deadlineCarga).filter(Boolean).map(x=>pD(x).getTime());
+  if(!ddls.length)return{date:null,error:"Falta DDL de Carga em algum booking do navio",ref,daysBefore};
+  const earliest=Math.min(...ddls);
+  return{date:new Date(earliest-daysBefore*86400000),error:null,ref,daysBefore};
+};
+const fmtCancelDate=d=>d?d.toLocaleDateString("pt-BR"):"—";
+const cancelDUntil=d=>d?Math.ceil((d.getTime()-Date.now())/86400000):null;
 
 const CSS=`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
@@ -142,25 +164,39 @@ function UserManager({users,onSave,onClose}){
 }
 
 function ArmadorManager({armadores,onSave,onClose}){
-  const[list,setList]=useState(armadores.map(a=>({...a})));
-  const[nn,setNn]=useState("");const[nd,setNd]=useState(0);
-  const add=()=>{if(nn.trim()&&!list.find(a=>a.name===nn.trim())){setList([...list,{name:nn.trim(),ddlDays:nd}]);setNn("");setNd(0)}};
+  const[list,setList]=useState(armadores.map(a=>({cancelRef:"DDL",...a})));
+  const[nn,setNn]=useState("");const[nd,setNd]=useState(0);const[nr,setNr]=useState("DDL");
+  const add=()=>{if(nn.trim()&&!list.find(a=>a.name===nn.trim())){setList([...list,{name:nn.trim(),ddlDays:nd,cancelRef:nr}]);setNn("");setNd(0);setNr("DDL")}};
   return(<Modal onClose={onClose} wide>
     <h2 style={{fontSize:17,fontWeight:700,marginBottom:4}}>Gerenciar Armadores</h2>
-    <p style={{color:"#94A3B8",fontSize:12,marginBottom:16}}>Dias de alerta antes do Deadline de Carga</p>
-    <div style={{display:"flex",gap:8,marginBottom:16}}>
-      <input value={nn} onChange={e=>setNn(e.target.value)} placeholder="Nome" style={{...iS,flex:1}}/>
-      <input type="number" min={0} value={nd} onChange={e=>setNd(parseInt(e.target.value)||0)} placeholder="DDL" style={{...iS,width:80}}/>
-      <button onClick={add} style={{...bP,padding:"9px 16px"}}>+</button>
+    <p style={{color:"#94A3B8",fontSize:12,marginBottom:16}}>Configure como cada armador calcula o prazo de cancelamento da reserva</p>
+    <div style={{padding:10,borderRadius:8,background:"#EFF6FF",border:"1px solid #BFDBFE",marginBottom:16,fontSize:11,color:"#1E40AF"}}>
+      <strong>ℹ️ Como funciona:</strong> escolha a referência (DDL de Carga ou ETD/Data de Saída) e quantos dias antes dela o armador cancela a reserva. O sistema calcula a data automaticamente e alerta 2 dias, 1 dia antes e no dia.
     </div>
-    <div style={{maxHeight:280,overflowY:"auto",marginBottom:16}}>
-      {list.map((a,i)=><div key={a.name} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",borderRadius:6,background:"#F8FAFC",marginBottom:3}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}><div style={{width:8,height:8,borderRadius:4,background:aC(a.name)}}/><span style={{fontSize:13,fontWeight:500}}>{a.name}</span></div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <input type="number" min={0} value={a.ddlDays} onChange={e=>setList(list.map((x,j)=>j===i?{...x,ddlDays:parseInt(e.target.value)||0}:x))} style={{width:60,padding:"4px 8px",borderRadius:6,border:"1px solid #E2E8F0",fontSize:12,textAlign:"center"}}/>
-          <span style={{fontSize:10,color:"#94A3B8"}}>dias</span>
-          <button onClick={()=>setList(list.filter(x=>x.name!==a.name))} style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer"}}>✕</button>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 130px 90px 40px",gap:8,marginBottom:16,alignItems:"end"}}>
+      <div><label style={lS}>Nome</label><input value={nn} onChange={e=>setNn(e.target.value)} placeholder="Ex: PIL" style={iS}/></div>
+      <div><label style={lS}>Referência</label><select value={nr} onChange={e=>setNr(e.target.value)} style={selS}><option value="DDL">DDL de Carga</option><option value="ETD">ETD (Saída)</option></select></div>
+      <div><label style={lS}>Dias antes</label><input type="number" min={0} value={nd} onChange={e=>setNd(parseInt(e.target.value)||0)} style={iS}/></div>
+      <button onClick={add} style={{...bP,padding:"9px 0",fontSize:14}}>+</button>
+    </div>
+    <div style={{maxHeight:320,overflowY:"auto",marginBottom:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 140px 100px 40px",gap:8,padding:"4px 12px",marginBottom:4}}>
+        <span style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase"}}>Armador</span>
+        <span style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase"}}>Referência</span>
+        <span style={{fontSize:9,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",textAlign:"center"}}>Dias antes</span>
+        <span/>
+      </div>
+      {list.map((a,i)=><div key={a.name} style={{display:"grid",gridTemplateColumns:"1fr 140px 100px 40px",gap:8,alignItems:"center",padding:"8px 12px",borderRadius:6,background:"#F8FAFC",marginBottom:3}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><div style={{width:8,height:8,borderRadius:4,background:aC(a.name),flexShrink:0}}/><span style={{fontSize:13,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</span></div>
+        <select value={a.cancelRef||"DDL"} onChange={e=>setList(list.map((x,j)=>j===i?{...x,cancelRef:e.target.value}:x))} style={{...selS,padding:"5px 8px",fontSize:11}}>
+          <option value="DDL">DDL de Carga</option>
+          <option value="ETD">ETD (Saída)</option>
+        </select>
+        <div style={{display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
+          <input type="number" min={0} value={a.ddlDays} onChange={e=>setList(list.map((x,j)=>j===i?{...x,ddlDays:parseInt(e.target.value)||0}:x))} style={{width:50,padding:"4px 6px",borderRadius:6,border:"1px solid #E2E8F0",fontSize:12,textAlign:"center"}}/>
+          <span style={{fontSize:10,color:"#94A3B8"}}>d</span>
         </div>
+        <button onClick={()=>setList(list.filter(x=>x.name!==a.name))} style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer"}}>✕</button>
       </div>)}
     </div>
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>onSave(list)} style={bP}>Salvar</button></div>
@@ -295,17 +331,23 @@ function PendenciaModal({onClose,onSave,initial}){
 function ShipModal({onClose,onSave,armadores,initial,onAddArmador}){
   const arms=armadores.map(a=>a.name);
   const d=initial||{nome:"",armador:arms[0]||"",pol:"",pod:"",previsaoSaida:"",dataCancelamento:""};
-  const[f,setF]=useState({nome:d.nome||"",armador:d.armador||arms[0]||"",pol:d.pol||"",pod:d.pod||"",previsaoSaida:d.previsaoSaida?String(d.previsaoSaida).split("T")[0]:"",dataCancelamento:d.dataCancelamento?String(d.dataCancelamento).split("T")[0]:""});
+  const[f,setF]=useState({nome:d.nome||"",armador:d.armador||arms[0]||"",pol:d.pol||"",pod:d.pod||"",previsaoSaida:d.previsaoSaida?String(d.previsaoSaida).split("T")[0]:""});
   const[newArmMode,setNewArmMode]=useState(false);
   const[newArmName,setNewArmName]=useState("");
   const[newArmDdl,setNewArmDdl]=useState(0);
+  const[newArmRef,setNewArmRef]=useState("DDL");
   const s=(k,v)=>setF(p=>({...p,[k]:v}));const ok=f.nome&&f.armador&&f.pol&&f.pod;
   const addArm=()=>{
     const name=newArmName.trim();
     if(!name||arms.includes(name))return;
-    if(onAddArmador)onAddArmador({name,ddlDays:newArmDdl});
-    s("armador",name);setNewArmMode(false);setNewArmName("");setNewArmDdl(0);
+    if(onAddArmador)onAddArmador({name,ddlDays:newArmDdl,cancelRef:newArmRef});
+    s("armador",name);setNewArmMode(false);setNewArmName("");setNewArmDdl(0);setNewArmRef("DDL");
   };
+  // Calcula data de cancelamento em tempo real com base na regra do armador selecionado
+  const selArmObj=armadores.find(a=>a.name===f.armador);
+  const shipForCalc={previsaoSaida:f.previsaoSaida,bookings:initial?.bookings||[]};
+  const calc=computeCancelDate(shipForCalc,selArmObj);
+  const dC=calc.date?cancelDUntil(calc.date):null;
   return(<Modal onClose={onClose}>
     <h2 style={{color:"#0F766E",fontSize:16,fontWeight:700,marginBottom:4}}>{initial?"Editar Navio":"Cadastrar Navio"}</h2>
     <p style={{color:"#94A3B8",fontSize:11,marginBottom:20}}>Dados do navio e datas de controle. Bookings serão adicionados depois.</p>
@@ -317,31 +359,45 @@ function ShipModal({onClose,onSave,armadores,initial,onAddArmador}){
         <button onClick={()=>setNewArmMode(true)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid #99F6E4",background:"#F0FDFA",color:"#0F766E",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>+ Novo</button>
       </div>:<div style={{padding:12,borderRadius:8,background:"#F0FDFA",border:"1px solid #99F6E4"}}>
         <p style={{color:"#0F766E",fontSize:10,fontWeight:700,textTransform:"uppercase",marginBottom:8}}>Novo Armador</p>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 80px",gap:8,marginBottom:8}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 110px 70px",gap:8,marginBottom:8}}>
           <div><label style={{...lS,fontSize:9}}>Nome *</label><input value={newArmName} onChange={e=>setNewArmName(e.target.value)} placeholder="Ex: PIL" style={iS} onKeyDown={e=>e.key==="Enter"&&addArm()}/></div>
-          <div><label style={{...lS,fontSize:9}}>DDL (dias)</label><input type="number" min={0} value={newArmDdl} onChange={e=>setNewArmDdl(parseInt(e.target.value)||0)} style={iS}/></div>
+          <div><label style={{...lS,fontSize:9}}>Referência</label><select value={newArmRef} onChange={e=>setNewArmRef(e.target.value)} style={{...selS,padding:"8px 10px",fontSize:11}}><option value="DDL">DDL</option><option value="ETD">ETD</option></select></div>
+          <div><label style={{...lS,fontSize:9}}>Dias antes</label><input type="number" min={0} value={newArmDdl} onChange={e=>setNewArmDdl(parseInt(e.target.value)||0)} style={iS}/></div>
         </div>
         <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
           <button onClick={()=>{setNewArmMode(false);setNewArmName("")}} style={{...bG,fontSize:10,padding:"5px 10px"}}>Cancelar</button>
           <button onClick={addArm} style={{padding:"5px 14px",borderRadius:6,border:"none",background:"#0F766E",color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit",opacity:newArmName.trim()?1:.5}}>Criar Armador</button>
         </div>
       </div>}
+      {selArmObj&&!newArmMode&&<p style={{fontSize:10,color:"#64748B",marginTop:4}}>📋 Regra: <strong>{selArmObj.ddlDays||0} dia(s)</strong> antes do <strong>{(selArmObj.cancelRef||"DDL")==="ETD"?"ETD (Data de Saída)":"DDL de Carga"}</strong></p>}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
       <div><label style={lS}>POL *</label><input value={f.pol} onChange={e=>s("pol",e.target.value)} placeholder="Santos" style={iS}/></div>
       <div><label style={lS}>POD *</label><input value={f.pod} onChange={e=>s("pod",e.target.value)} placeholder="Roterdã" style={iS}/></div>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
-      <div><label style={lS}>🚢 Data de Saída</label><input type="date" value={f.previsaoSaida} onChange={e=>s("previsaoSaida",e.target.value)} style={iS}/></div>
-      <div><label style={lS}>❌ Data de Cancelamento</label><input type="date" value={f.dataCancelamento} onChange={e=>s("dataCancelamento",e.target.value)} style={iS}/></div>
+    <div style={{marginBottom:12}}>
+      <label style={lS}>🚢 Data de Saída (ETD)</label>
+      <input type="date" value={f.previsaoSaida} onChange={e=>s("previsaoSaida",e.target.value)} style={iS}/>
+    </div>
+    {/* Data de cancelamento: APENAS visualização, calculada a partir da regra do armador */}
+    <div style={{padding:12,borderRadius:8,background:calc.error?"#FEF3C7":"#FEF2F2",border:`1px solid ${calc.error?"#FDE68A":"#FECACA"}`,marginBottom:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <label style={{...lS,color:calc.error?"#B45309":"#DC2626",marginBottom:2}}>❌ Data de Cancelamento (calculada)</label>
+        {calc.date&&dC!==null&&<span style={{fontSize:9,fontWeight:600,color:dC<0?"#DC2626":dC<=2?"#DC2626":"#64748B"}}>{dC<0?"prazo vencido":dC===0?"HOJE":`em ${dC} dia(s)`}</span>}
+      </div>
+      {calc.error
+        ?<p style={{fontSize:12,color:"#B45309",fontWeight:600,marginTop:2}}>⚠ {calc.error}</p>
+        :<p style={{fontSize:15,fontWeight:700,color:"#DC2626",marginTop:2}}>{fmtCancelDate(calc.date)}</p>}
     </div>
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>ok&&onSave(f)} style={{...bP,background:"#0F766E",opacity:ok?1:.5}}>Salvar</button></div>
   </Modal>);
 }
 
 // ─── ADD BOOKING TO SHIP — campos do primeiro + deadline de carga ───
-function AddShipBookingModal({onClose,onSave,ship}){
+function AddShipBookingModal({onClose,onSave,ship,armadores}){
   const bkgs=ship.bookings||[];const first=bkgs[0];
+  const armObj=(armadores||[]).find(a=>a.name===ship.armador);
+  const needsDDL=(armObj?.cancelRef||"DDL")==="DDL";
   const[f,setF]=useState({
     bookingNumber:"",
     client:first?.client||ship.cliente||"",
@@ -356,10 +412,20 @@ function AddShipBookingModal({onClose,onSave,ship}){
   });
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const sobra=f.qtdTotal-f.qtdUsando;
+  // Validação: armador DDL exige deadlineCarga; ETD exige previsaoSaida no navio
+  const missingDDL=needsDDL&&!f.deadlineCarga;
+  const missingETD=!needsDDL&&!ship.previsaoSaida;
+  const canSave=f.bookingNumber&&f.client&&!missingDDL&&!missingETD;
+  const tryToSave=()=>{
+    if(missingDDL){alert("Este armador calcula o cancelamento pelo DDL de Carga. Informe o Deadline de Carga para continuar.");return}
+    if(missingETD){alert("Este armador calcula o cancelamento pela ETD. O navio precisa ter Data de Saída cadastrada antes de adicionar bookings.");return}
+    if(!f.bookingNumber||!f.client){alert("Nº do Booking e Cliente são obrigatórios.");return}
+    onSave(f);
+  };
   return(<Modal onClose={onClose} wide>
     <h2 style={{color:"#0F766E",fontSize:16,fontWeight:700,marginBottom:4}}>Booking no Navio {ship.nome}</h2>
     <p style={{color:"#64748B",fontSize:11,marginBottom:4}}>Armador: <strong style={{color:aC(ship.armador)}}>{ship.armador}</strong> · Saída: <strong>{fD(ship.previsaoSaida)}</strong>{first?" · Dados pré-preenchidos do 1º booking":""}</p>
-    <p style={{color:"#94A3B8",fontSize:10,marginBottom:16}}>A data de saída segue a do navio. Preencha o Deadline de Carga deste booking.</p>
+    <p style={{color:"#94A3B8",fontSize:10,marginBottom:16}}>Regra de cancelamento: <strong>{armObj?.ddlDays||0} dia(s) antes do {needsDDL?"DDL de Carga":"ETD"}</strong></p>
 
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
       <div><label style={lS}>Nº Booking *</label><input value={f.bookingNumber} onChange={e=>s("bookingNumber",e.target.value)} placeholder="Ex: MSCU1234567" style={iS}/></div>
@@ -377,9 +443,10 @@ function AddShipBookingModal({onClose,onSave,ship}){
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-      <div style={{padding:12,borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA"}}>
-        <label style={{...lS,color:"#DC2626"}}>⏰ Deadline de Carga *</label>
-        <input type="date" value={f.deadlineCarga} onChange={e=>s("deadlineCarga",e.target.value)} style={{...iS,border:"1px solid #FECACA"}}/>
+      <div style={{padding:12,borderRadius:8,background:missingDDL?"#FEE2E2":"#FEF2F2",border:`1px solid ${missingDDL?"#DC2626":"#FECACA"}`}}>
+        <label style={{...lS,color:"#DC2626"}}>⏰ Deadline de Carga {needsDDL?"*":""}</label>
+        <input type="date" value={f.deadlineCarga} onChange={e=>s("deadlineCarga",e.target.value)} style={{...iS,border:`1px solid ${missingDDL?"#DC2626":"#FECACA"}`}}/>
+        {missingDDL&&<p style={{fontSize:9,color:"#DC2626",marginTop:4,fontWeight:600}}>⚠ Obrigatório — este armador cancela com base no DDL</p>}
       </div>
       <div style={{padding:12,borderRadius:8,background:"#F0FDFA",border:"1px solid #99F6E4"}}>
         <label style={{...lS,color:"#0F766E"}}>🚢 Saída do Navio (referência)</label>
@@ -396,11 +463,13 @@ function AddShipBookingModal({onClose,onSave,ship}){
     <div style={{marginBottom:12}}><label style={lS}>Tipo de Container</label><input value={f.tipoCntr} onChange={e=>s("tipoCntr",e.target.value)} placeholder="Ex: 5X40" style={iS}/></div>
     <div style={{marginBottom:16}}><label style={lS}>Observações</label><textarea value={f.observation} onChange={e=>s("observation",e.target.value)} rows={2} style={{...iS,resize:"vertical"}}/></div>
 
-    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>onSave(f)} style={{...bP,background:"#0F766E"}}>Adicionar Booking</button></div>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={tryToSave} style={{...bP,background:"#0F766E",opacity:canSave?1:.5}}>Adicionar Booking</button></div>
   </Modal>);
 }
 
-function EditShipBookingModal({onClose,onSave,ship,booking}){
+function EditShipBookingModal({onClose,onSave,ship,booking,armadores}){
+  const armObj=(armadores||[]).find(a=>a.name===ship.armador);
+  const needsDDL=(armObj?.cancelRef||"DDL")==="DDL";
   const[f,setF]=useState({
     bookingNumber:booking.bookingNumber||"",
     client:booking.client||"",
@@ -415,9 +484,15 @@ function EditShipBookingModal({onClose,onSave,ship,booking}){
   });
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const sobra=f.qtdTotal-f.qtdUsando;
+  const missingDDL=needsDDL&&!f.deadlineCarga;
+  const tryToSave=()=>{
+    if(missingDDL){alert("Este armador calcula o cancelamento pelo DDL de Carga. Informe o Deadline de Carga para continuar.");return}
+    onSave({...booking,...f,qtdDisponivel:f.qtdTotal});
+  };
   return(<Modal onClose={onClose} wide>
     <h2 style={{color:"#0F766E",fontSize:16,fontWeight:700,marginBottom:4}}>Editar Booking — {ship.nome}</h2>
-    <p style={{color:"#64748B",fontSize:11,marginBottom:16}}>Armador: <strong style={{color:aC(ship.armador)}}>{ship.armador}</strong> · Saída: <strong>{fD(ship.previsaoSaida)}</strong></p>
+    <p style={{color:"#64748B",fontSize:11,marginBottom:4}}>Armador: <strong style={{color:aC(ship.armador)}}>{ship.armador}</strong> · Saída: <strong>{fD(ship.previsaoSaida)}</strong></p>
+    <p style={{color:"#94A3B8",fontSize:10,marginBottom:16}}>Regra de cancelamento: <strong>{armObj?.ddlDays||0} dia(s) antes do {needsDDL?"DDL de Carga":"ETD"}</strong></p>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
       <div><label style={lS}>Nº Booking</label><input value={f.bookingNumber} onChange={e=>s("bookingNumber",e.target.value)} style={iS}/></div>
       <div><label style={lS}>Cliente</label><input value={f.client} onChange={e=>s("client",e.target.value)} style={iS}/></div>
@@ -428,7 +503,11 @@ function EditShipBookingModal({onClose,onSave,ship,booking}){
       <div><label style={lS}>POD</label><input value={f.pod} onChange={e=>s("pod",e.target.value)} style={iS}/></div>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-      <div style={{padding:12,borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA"}}><label style={{...lS,color:"#DC2626"}}>⏰ Deadline de Carga</label><input type="date" value={f.deadlineCarga} onChange={e=>s("deadlineCarga",e.target.value)} style={{...iS,border:"1px solid #FECACA"}}/></div>
+      <div style={{padding:12,borderRadius:8,background:missingDDL?"#FEE2E2":"#FEF2F2",border:`1px solid ${missingDDL?"#DC2626":"#FECACA"}`}}>
+        <label style={{...lS,color:"#DC2626"}}>⏰ Deadline de Carga {needsDDL?"*":""}</label>
+        <input type="date" value={f.deadlineCarga} onChange={e=>s("deadlineCarga",e.target.value)} style={{...iS,border:`1px solid ${missingDDL?"#DC2626":"#FECACA"}`}}/>
+        {missingDDL&&<p style={{fontSize:9,color:"#DC2626",marginTop:4,fontWeight:600}}>⚠ Obrigatório — este armador cancela com base no DDL</p>}
+      </div>
       <div style={{padding:12,borderRadius:8,background:"#F0FDFA",border:"1px solid #99F6E4"}}><label style={{...lS,color:"#0F766E"}}>🚢 Saída do Navio</label><p style={{fontSize:14,fontWeight:700,color:"#0F766E",padding:"9px 0"}}>{fD(ship.previsaoSaida)}</p></div>
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
@@ -438,7 +517,7 @@ function EditShipBookingModal({onClose,onSave,ship,booking}){
     </div>
     <div style={{marginBottom:12}}><label style={lS}>Tipo de Container</label><input value={f.tipoCntr} onChange={e=>s("tipoCntr",e.target.value)} placeholder="Ex: 5X40" style={iS}/></div>
     <div style={{marginBottom:16}}><label style={lS}>Observações</label><textarea value={f.observation} onChange={e=>s("observation",e.target.value)} rows={2} style={{...iS,resize:"vertical"}}/></div>
-    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>onSave({...booking,...f,qtdDisponivel:f.qtdTotal})} style={{...bP,background:"#0F766E"}}>Salvar Alterações</button></div>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={tryToSave} style={{...bP,background:"#0F766E",opacity:missingDDL?.5:1}}>Salvar Alterações</button></div>
   </Modal>);
 }
 
@@ -447,27 +526,18 @@ function Notifications({bookings,ships,armadores,notifPerm,onRequestPerm}){
   const notes=[];
   const esc=bookings.filter(r=>!isTrashed(r)).filter(isEsc);
   if(esc.length>0)notes.push({id:"sla",msg:`🚨 ${esc.length} booking(s) estourou(aram) o SLA de 2h!`,color:"#DC2626",bg:"#FEF2F2",bd:"#FECACA",critical:true});
-  armadores.forEach(arm=>{
-    if(arm.ddlDays<=0)return;
-    ships.filter(s=>s.armador===arm.name).forEach(s=>{
-      (s.bookings||[]).forEach(b=>{
-        if(!b.deadlineCarga)return;
-        const d=dUntil(b.deadlineCarga);
-        if(d!==null&&d<=arm.ddlDays&&d>=0){
-          const id=`ddl-${s.id}-${b.id}`;
-          notes.push({id,msg:`⏰ ${arm.name} — "${s.nome}" BKG ${b.bookingNumber||"s/n"}: DDL carga em ${d}d! (${fD(b.deadlineCarga)})`,color:aC(arm.name),bg:"#FEF2F2",bd:"#FECACA",critical:d<=1});
-        }
-      });
-    });
-  });
-  // Cancelamento: alerta APENAS 2 dias antes, 1 dia antes e no dia (todos os armadores, independente de ddlDays)
+  // Cancelamento: calcula data a partir da regra do armador e alerta 2/1/0 dias antes.
+  // A "data de cancelamento" agora é derivada dinamicamente (DDL de Carga mais antigo OU ETD),
+  // conforme configurado em cada armador.
   ships.forEach(s=>{
-    if(!s.dataCancelamento)return;
-    const dc=dUntil(s.dataCancelamento);
+    const armObj=armadores.find(a=>a.name===s.armador);
+    const calc=computeCancelDate(s,armObj);
+    if(!calc.date)return;
+    const dc=cancelDUntil(calc.date);
     if(dc===null||dc<0||dc>2)return;
     const id=`cancel-${s.id}`;
     const lbl=dc===0?"HOJE":dc===1?"AMANHÃ":`em ${dc} dias`;
-    notes.push({id,msg:`⚠️ ${s.armador||""} — "${s.nome}": Cancelamento da reserva ${lbl}! (${fD(s.dataCancelamento)})`,color:aC(s.armador||""),bg:"#FFF7ED",bd:"#FED7AA",critical:dc<=1});
+    notes.push({id,msg:`⚠️ ${s.armador||""} — "${s.nome}": Cancelamento da reserva ${lbl}! (${fmtCancelDate(calc.date)})`,color:aC(s.armador||""),bg:"#FFF7ED",bd:"#FED7AA",critical:dc<=1});
   });
   const visible=notes.filter(n=>!dismissed[n.id]);
   if(!visible.length&&notifPerm==="granted")return null;
@@ -880,7 +950,7 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
       <div style={{display:"flex",gap:10}}>
         <div style={{padding:"10px 18px",borderRadius:10,background:"#F0FDFA",border:"1px solid #99F6E4",textAlign:"center"}}><p style={{fontSize:20,fontWeight:700,color:"#0F766E"}}>{totNavios}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#115E59"}}>Navios</p></div>
         <div style={{padding:"10px 18px",borderRadius:10,background:"#DBEAFE",border:"1px solid #BFDBFE",textAlign:"center"}}><p style={{fontSize:20,fontWeight:700,color:"#1D4ED8"}}>{totBkgs}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#1E40AF"}}>Bookings</p></div>
-        {armCfg?.ddlDays>0&&<div style={{padding:"10px 18px",borderRadius:10,background:"#FEF2F2",border:"1px solid #FECACA",textAlign:"center"}}><p style={{fontSize:20,fontWeight:700,color:"#DC2626"}}>{armCfg.ddlDays}d</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#991B1B"}}>DDL Alerta</p></div>}
+        {armCfg?.ddlDays>0&&<div style={{padding:"10px 14px",borderRadius:10,background:"#FEF2F2",border:"1px solid #FECACA",textAlign:"center"}}><p style={{fontSize:18,fontWeight:700,color:"#DC2626"}}>{armCfg.ddlDays}d</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#991B1B"}}>antes do {(armCfg.cancelRef||"DDL")==="ETD"?"ETD":"DDL"}</p></div>}
       </div>
       <button onClick={()=>setShowNew(true)} style={{...bP,background:"#0F766E",padding:"8px 16px",fontSize:11}}>+ Novo Navio</button>
     </div>
@@ -917,21 +987,23 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
       {/* Ships + bookings table layout */}
       {armShips.map(ship=>{
         const bkgs=ship.bookings||[];
-        const cancelDays=dUntil(ship.dataCancelamento);const cancelAlert=armCfg?.ddlDays>0&&cancelDays!==null&&cancelDays>=0&&cancelDays<=armCfg.ddlDays;
-        let sDdl=null;bkgs.forEach(b=>{if(b.deadlineCarga){const d=dUntil(b.deadlineCarga);if(d!==null&&d>=0&&(sDdl===null||d<sDdl))sDdl=d}});
-        const ddlAlert=armCfg?.ddlDays>0&&sDdl!==null&&sDdl<=armCfg.ddlDays;
+        const calcCancel=computeCancelDate(ship,armCfg);
+        const cancelDays=calcCancel.date?cancelDUntil(calcCancel.date):null;
+        const cancelAlert=cancelDays!==null&&cancelDays>=0&&cancelDays<=2;
         const etdStr=ship.previsaoSaida?pD(ship.previsaoSaida).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}):"—";
+        const cancelStr=calcCancel.date?calcCancel.date.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}):"—";
 
         return(<div key={ship.id} style={{borderBottom:`2px solid ${col}15`}}>
           {/* Ship header — like the green/blue row in Excel */}
           <div style={{background:`${col}`,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
               <span style={{color:"#fff",fontSize:15,fontWeight:800,letterSpacing:".5px"}}>
                 {ship.nome} — ETD {etdStr}
               </span>
               {ship.pol&&ship.pod&&<span style={{color:"rgba(255,255,255,.7)",fontSize:11}}>({ship.pol} → {ship.pod})</span>}
-              {ddlAlert&&<span style={{padding:"2px 8px",borderRadius:6,background:"#fff",color:"#DC2626",fontSize:9,fontWeight:700,animation:"pulse 1.5s ease infinite"}}>⏰ DDL {sDdl}d!</span>}
-              {cancelAlert&&<span style={{padding:"2px 8px",borderRadius:6,background:"#FEF3C7",color:"#92400E",fontSize:9,fontWeight:700}}>⚠ Cancel {cancelDays}d</span>}
+              {calcCancel.error
+                ?<span style={{padding:"2px 8px",borderRadius:6,background:"#FEF3C7",color:"#92400E",fontSize:9,fontWeight:700}} title={calcCancel.error}>⚠ {calcCancel.error}</span>
+                :<span style={{padding:"2px 8px",borderRadius:6,background:cancelAlert?"#fff":"rgba(255,255,255,.2)",color:cancelAlert?"#DC2626":"#fff",fontSize:9,fontWeight:700,animation:cancelAlert?"pulse 1.5s ease infinite":"none"}}>❌ Cancel {cancelStr}{cancelAlert?` (${cancelDays===0?"HOJE":cancelDays===1?"AMANHÃ":`${cancelDays}d`})`:""}</span>}
             </div>
             <div style={{display:"flex",gap:5}}>
               <button onClick={()=>setAddBkgTo(ship)} style={{padding:"4px 12px",borderRadius:5,border:"1px solid rgba(255,255,255,.4)",background:"rgba(255,255,255,.15)",color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>+ Booking</button>
@@ -951,17 +1023,16 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
               </tr></thead>
               <tbody>{bkgs.map(b=>{
                 const bD=b.deadlineCarga?dUntil(b.deadlineCarga):null;
-                const bA=armCfg?.ddlDays>0&&bD!==null&&bD<=armCfg.ddlDays&&bD>=0;
+                const bA=cancelAlert;
                 const bSobra=(b.qtdDisponivel||b.qtdTotal||0)-(b.qtdUsando||0);
-                const cancelStr=ship.dataCancelamento?pD(ship.dataCancelamento).toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}):"—";
                 return(<tr key={b.id} style={{background:bA?"#FEF2F2":"#fff",borderBottom:"1px solid #F1F5F9"}} onMouseOver={e=>e.currentTarget.style.background=bA?"#FEE2E2":"#F8FAFC"} onMouseOut={e=>e.currentTarget.style.background=bA?"#FEF2F2":"#fff"}>
                   <td style={{...tdS,fontWeight:700,color:col}}>{b.bookingNumber||"—"}</td>
                   <td style={{...tdS,fontWeight:600}}>{b.pol||ship.pol||"—"}</td>
                   <td style={{...tdS,fontWeight:600}}>{b.pod||ship.pod||"—"}</td>
                   <td style={{...tdS,color:"#64748B"}}>{etdStr}</td>
-                  <td style={{...tdS,color:bA?"#DC2626":"#64748B",fontWeight:bA?700:400}}>{b.deadlineCarga?fD(b.deadlineCarga):"—"}{bA?` (${bD}d!)`:""}</td>
+                  <td style={{...tdS,color:bA?"#DC2626":"#64748B",fontWeight:bA?700:400}}>{b.deadlineCarga?fD(b.deadlineCarga):"—"}{bA&&bD!==null?` (${bD}d!)`:""}</td>
                   <td style={{...tdS,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",color:"#64748B",fontSize:10}}>{b.observation||"—"}</td>
-                  <td style={{...tdS,background:"#FEF2F220",color:"#DC2626",fontWeight:600,textAlign:"center"}}>{cancelStr}{cancelAlert?` (${cancelDays}d!)`:""}</td>
+                  <td style={{...tdS,background:"#FEF2F220",color:"#DC2626",fontWeight:600,textAlign:"center"}}>{cancelStr}{cancelAlert?` (${cancelDays===0?"HOJE":cancelDays===1?"AMANHÃ":`${cancelDays}d`})`:""}</td>
                   <td style={{...tdS,textAlign:"center",fontWeight:600}}>{b.tipoCntr||(b.equipQty?`${b.equipQty}x${b.equipType||""}`:"")||"—"}</td>
                   <td style={{...tdS,fontWeight:500}}>{b.client||"—"}</td>
                   <td style={{...tdS,textAlign:"center",fontWeight:700,background:"#D1FAE520",color:"#047857"}}>{b.qtdUsando||""}</td>
@@ -982,8 +1053,8 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
     {armsEmpty.length>0&&<p style={{color:"#CBD5E1",fontSize:10,textAlign:"center",marginTop:10}}>Sem navios: {armsEmpty.join(", ")}</p>}
     {showNew&&<ShipModal onClose={()=>setShowNew(false)} onSave={f=>{setShips(prev=>[{id:`NV-${Date.now()}`,bookings:[],...f,createdBy:user.name,createdAt:Date.now()},...prev]);setShowNew(false)}} armadores={armadores} onAddArmador={addArmador}/>}
     {editShip&&<ShipModal onClose={()=>setEditShip(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===editShip.id?{...s,...f}:s));setEditShip(null)}} armadores={armadores} initial={editShip} onAddArmador={addArmador}/>}
-    {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===addBkgTo.id?{...s,bookings:[...s.bookings,{id:`SBK-${Date.now()}`,createdAt:Date.now(),...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo}/>}
-    {editBkg&&editBkgShip&&<EditShipBookingModal onClose={()=>{setEditBkg(null);setEditBkgShip(null)}} onSave={f=>{updBkg(editBkgShip.id,f);setEditBkg(null);setEditBkgShip(null)}} ship={editBkgShip} booking={editBkg}/>}
+    {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===addBkgTo.id?{...s,bookings:[...s.bookings,{id:`SBK-${Date.now()}`,createdAt:Date.now(),...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo} armadores={armadores}/>}
+    {editBkg&&editBkgShip&&<EditShipBookingModal onClose={()=>{setEditBkg(null);setEditBkgShip(null)}} onSave={f=>{updBkg(editBkgShip.id,f);setEditBkg(null);setEditBkgShip(null)}} ship={editBkgShip} booking={editBkg} armadores={armadores}/>}
   </div>);
 }
 
@@ -1193,32 +1264,20 @@ export default function App(){
     if(!user||!loaded)return;
     const check=()=>{
       const alerts=[];
-      armadores.forEach(arm=>{
-        if(arm.ddlDays<=0)return;
-        ships.filter(s=>s.armador===arm.name).forEach(s=>{
-          (s.bookings||[]).forEach(b=>{
-            if(!b.deadlineCarga)return;
-            const d=dUntil(b.deadlineCarga);
-            if(d!==null&&d>=0&&d<=arm.ddlDays){
-              const key=`ddl-${b.id||b.bookingNumber}-${d}`;
-              if(!notifiedRef.current[key]){
-                alerts.push({title:`⏰ DDL Carga em ${d} dia(s)!`,body:`${arm.name} — "${s.nome}" BKG ${b.bookingNumber||"s/n"}: Deadline de carga ${fD(b.deadlineCarga)}`,key});
-              }
-            }
-          });
-        });
-      });
-      // Cancelamento de reserva: alerta APENAS 2 dias antes, 1 dia antes e no dia (todos os armadores, independente de ddlDays)
+      // Cancelamento de reserva: calcula data a partir da regra do armador.
+      // Alerta 2 dias antes, 1 dia antes e no dia.
       ships.forEach(s=>{
-        if(!s.dataCancelamento)return;
-        const dc=dUntil(s.dataCancelamento);
+        const armObj=armadores.find(a=>a.name===s.armador);
+        const calc=computeCancelDate(s,armObj);
+        if(!calc.date)return;
+        const dc=cancelDUntil(calc.date);
         if(dc===null||dc<0||dc>2)return;
         const key=`cancel-${s.id}-${dc}`;
         if(notifiedRef.current[key])return;
         const lbl=dc===0?"HOJE":dc===1?"AMANHÃ":`em ${dc} dias`;
         alerts.push({
           title:`⚠️ Cancelamento ${lbl}!`,
-          body:`${s.armador||""} — "${s.nome}": Data de cancelamento ${fD(s.dataCancelamento)}`,
+          body:`${s.armador||""} — "${s.nome}": Data de cancelamento ${fmtCancelDate(calc.date)}`,
           key
         });
       });
