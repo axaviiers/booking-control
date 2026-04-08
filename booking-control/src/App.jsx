@@ -720,39 +720,41 @@ const SOL_ST={
   Cancelado: {c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA",i:"🚫"},
 };
 const TENT_ST={
-  Aguardando:{c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A",i:"⏳"},
-  Confirmado:{c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0",i:"✅"},
-  Recusado:  {c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA",i:"❌"},
+  Solicitado:               {c:"#1D4ED8",bg:"#DBEAFE",bd:"#BFDBFE",i:"📨"},
+  "Confirmado em outro navio":{c:"#7C3AED",bg:"#F5F3FF",bd:"#E9D5FF",i:"🔀"},
+  Aguardando:               {c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A",i:"⏳"},
+  Cancelado:                {c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA",i:"🚫"},
 };
+const PROC_STATUSES=["Solicitado","Confirmado em outro navio","Aguardando","Cancelado"];
 
-function NovaSolicitacaoModal({onClose,onSave,initial}){
+function NovaSolicitacaoModal({onClose,onSave,initial,armadores}){
   const d=initial||{};
+  const arms=(armadores||[]).map(a=>a.name);
   const[f,setF]=useState({
-    client:d.client||"",clientRef:d.clientRef||"",subject:d.subject||"",
-    equipQty:d.equipQty||1,equipType:d.equipType||EQ[0],
-    pol:d.pol||"",pod:d.pod||"",dataDesejada:d.dataDesejada||"",
-    observation:d.observation||""
+    navio:d.navio||d.subject||"",
+    armador:d.armador||arms[0]||"",
+    saida:d.saida||d.dataDesejada||"",
+    pol:d.pol||"",
+    pod:d.pod||"",
   });
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
-  const canSave=f.client&&f.subject&&f.pol&&f.pod;
+  const canSave=f.navio&&f.armador&&f.pol&&f.pod;
   return(<Modal onClose={onClose} wide>
     <h2 style={{color:"#7C3AED",fontSize:17,fontWeight:700,marginBottom:4}}>📋 {initial?"Editar":"Nova"} Solicitação</h2>
-    <p style={{color:"#94A3B8",fontSize:12,marginBottom:16}}>Pedido de reserva a ser oferecido a múltiplos armadores</p>
+    <p style={{color:"#94A3B8",fontSize:12,marginBottom:16}}>Cadastre o navio para anexar processos em seguida</p>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-      <div><label style={lS}>Cliente *</label><input value={f.client} onChange={e=>s("client",e.target.value)} style={iS}/></div>
-      <div><label style={lS}>Referência</label><input value={f.clientRef} onChange={e=>s("clientRef",e.target.value)} style={iS}/></div>
+      <div><label style={lS}>Navio *</label><input value={f.navio} onChange={e=>s("navio",e.target.value)} placeholder="Ex: MSC LORETO" style={iS}/></div>
+      <div><label style={lS}>Armador *</label>
+        {arms.length>0
+          ?<select value={f.armador} onChange={e=>s("armador",e.target.value)} style={selS}>{arms.map(a=><option key={a}>{a}</option>)}</select>
+          :<input value={f.armador} onChange={e=>s("armador",e.target.value)} placeholder="Nome do armador" style={iS}/>}
+      </div>
     </div>
-    <div style={{marginBottom:10}}><label style={lS}>Assunto / Carga *</label><input value={f.subject} onChange={e=>s("subject",e.target.value)} style={iS}/></div>
-    <div style={{display:"grid",gridTemplateColumns:"80px 1fr",gap:10,marginBottom:10}}>
-      <div><label style={lS}>Qtd</label><input type="number" min={1} value={f.equipQty} onChange={e=>s("equipQty",Math.max(1,parseInt(e.target.value)||1))} style={iS}/></div>
-      <div><label style={lS}>Equipamento</label><select value={f.equipType} onChange={e=>s("equipType",e.target.value)} style={selS}>{EQ.map(t=><option key={t}>{t}</option>)}</select></div>
+    <div style={{marginBottom:10}}><label style={lS}>Saída</label><input type="date" value={f.saida} onChange={e=>s("saida",e.target.value)} style={iS}/></div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+      <div><label style={lS}>Origem *</label><input value={f.pol} onChange={e=>s("pol",e.target.value)} placeholder="Ex: Santos" style={iS}/></div>
+      <div><label style={lS}>Destino *</label><input value={f.pod} onChange={e=>s("pod",e.target.value)} placeholder="Ex: Rotterdam" style={iS}/></div>
     </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-      <div><label style={lS}>POL *</label><input value={f.pol} onChange={e=>s("pol",e.target.value)} style={iS}/></div>
-      <div><label style={lS}>POD *</label><input value={f.pod} onChange={e=>s("pod",e.target.value)} style={iS}/></div>
-    </div>
-    <div style={{marginBottom:10}}><label style={lS}>Data Desejada de Saída</label><input type="date" value={f.dataDesejada} onChange={e=>s("dataDesejada",e.target.value)} style={iS}/></div>
-    <div style={{marginBottom:16}}><label style={lS}>Observações</label><textarea value={f.observation} onChange={e=>s("observation",e.target.value)} rows={3} style={{...iS,resize:"vertical"}}/></div>
     <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
       <button onClick={onClose} style={bG}>Cancelar</button>
       <button onClick={()=>canSave&&onSave(f)} style={{...bP,background:"#7C3AED",opacity:canSave?1:.5}}>Salvar</button>
@@ -783,19 +785,27 @@ function SolicitacoesPanel({data,setData,armadores,user}){
 
   const addTentativa=(solId)=>{
     const form=tf[solId]||{};
-    if(!form.armador)return;
-    const tent={id:`TN-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2,4).toUpperCase()}`,armador:form.armador,bookingNumber:form.bookingNumber||"",navio:form.navio||"",status:"Aguardando",obs:form.obs||"",by:user.name,at:Date.now()};
+    if(!form.bookingNumber&&!form.equipType)return;
+    const tent={
+      id:`PR-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2,4).toUpperCase()}`,
+      bookingNumber:form.bookingNumber||"",
+      equipQty:Math.max(1,parseInt(form.equipQty)||1),
+      equipType:form.equipType||"",
+      status:form.status||"Solicitado",
+      by:user.name,at:Date.now()
+    };
     setData(prev=>A(prev).map(s=>s.id===solId?{...s,tentativas:[...A(s.tentativas),tent],updatedAt:Date.now()}:s));
-    setTf(p=>({...p,[solId]:{armador:arms[0]||"",bookingNumber:"",navio:"",obs:""}}));
+    setTf(p=>({...p,[solId]:{bookingNumber:"",equipQty:1,equipType:"",status:"Solicitado"}}));
   };
   const setTentStatus=(solId,tentId,newStatus)=>{
     setData(prev=>A(prev).map(s=>{
       if(s.id!==solId)return s;
       const tentativas=A(s.tentativas).map(t=>t.id===tentId?{...t,status:newStatus}:t);
-      // Se alguma tentativa foi confirmada, a solicitação passa para Confirmado automaticamente
-      const anyConfirmed=tentativas.some(t=>t.status==="Confirmado");
-      return{...s,tentativas,status:anyConfirmed?"Confirmado":(s.status==="Confirmado"?"Aberto":s.status||"Aberto"),updatedAt:Date.now()};
+      return{...s,tentativas,updatedAt:Date.now()};
     }));
+  };
+  const updTent=(solId,tentId,patch)=>{
+    setData(prev=>A(prev).map(s=>s.id===solId?{...s,tentativas:A(s.tentativas).map(t=>t.id===tentId?{...t,...patch}:t),updatedAt:Date.now()}:s));
   };
   const delTent=(solId,tentId)=>{
     if(!window.confirm("Remover esta tentativa?"))return;
@@ -821,7 +831,9 @@ function SolicitacoesPanel({data,setData,armadores,user}){
         const st=SOL_ST[sol.status||"Aberto"];
         const tents=A(sol.tentativas);
         const isExp=!!expanded[sol.id];
-        const form=tf[sol.id]||{armador:arms[0]||"",bookingNumber:"",navio:"",obs:""};
+        const form=tf[sol.id]||{bookingNumber:"",equipQty:1,equipType:"",status:"Solicitado"};
+        const navioLabel=sol.navio||sol.subject||"(sem navio)";
+        const armadorLabel=sol.armador||"";
         return(<div key={sol.id} style={{background:"#fff",border:`1px solid ${st.bd}`,borderRadius:10,overflow:"hidden"}}>
           {/* Header da solicitação */}
           <div style={{padding:"12px 14px",background:st.bg,borderBottom:isExp?`1px solid ${st.bd}`:"none",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,cursor:"pointer"}} onClick={()=>setExpanded(p=>({...p,[sol.id]:!p[sol.id]}))}>
@@ -829,18 +841,15 @@ function SolicitacoesPanel({data,setData,armadores,user}){
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
                 <span style={{padding:"2px 8px",borderRadius:12,fontSize:9,fontWeight:700,background:"#fff",color:st.c,border:`1px solid ${st.bd}`}}>{st.i} {sol.status||"Aberto"}</span>
                 <span style={{fontSize:9,color:"#94A3B8",fontWeight:600}}>{sol.id}</span>
-                <span style={{fontSize:13,fontWeight:700,color:"#1E293B"}}>{sol.client}</span>
-                {sol.clientRef&&<span style={{fontSize:10,color:"#64748B"}}>(Ref: {sol.clientRef})</span>}
+                <span style={{fontSize:13,fontWeight:700,color:"#1E293B"}}>🚢 {navioLabel}</span>
+                {armadorLabel&&<span style={{padding:"1px 8px",borderRadius:10,fontSize:10,fontWeight:700,background:`${aC(armadorLabel)}18`,color:aC(armadorLabel)}}>{armadorLabel}</span>}
               </div>
-              <p style={{fontSize:12,color:"#475569",marginBottom:4}}>{sol.subject}</p>
               <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:10,color:"#64748B"}}>
-                <span>📦 {sol.equipQty}x {sol.equipType}</span>
-                <span>🚢 {sol.pol} → 📍 {sol.pod}</span>
-                {sol.dataDesejada&&<span>📅 {fD(sol.dataDesejada)}</span>}
+                {(sol.pol||sol.pod)&&<span>📍 {sol.pol||"—"} → {sol.pod||"—"}</span>}
+                {(sol.saida||sol.dataDesejada)&&<span>📅 Saída: {fD(sol.saida||sol.dataDesejada)}</span>}
                 <span>👤 {sol.createdBy}</span>
-                <span style={{padding:"1px 6px",borderRadius:8,background:tents.length>0?"#DBEAFE":"#F1F5F9",color:tents.length>0?"#1D4ED8":"#94A3B8",fontWeight:600}}>{tents.length} tentativa{tents.length!==1?"s":""}</span>
+                <span style={{padding:"1px 6px",borderRadius:8,background:tents.length>0?"#DBEAFE":"#F1F5F9",color:tents.length>0?"#1D4ED8":"#94A3B8",fontWeight:600}}>{tents.length} processo{tents.length!==1?"s":""}</span>
               </div>
-              {sol.observation&&<p style={{fontSize:10,color:"#64748B",marginTop:4,fontStyle:"italic"}}>"{sol.observation}"</p>}
             </div>
             <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
               <button onClick={()=>setEditSol(sol)} title="Editar" style={{background:"none",border:"none",color:"#64748B",cursor:"pointer",fontSize:12,padding:"4px 6px"}}>✏️</button>
@@ -850,40 +859,36 @@ function SolicitacoesPanel({data,setData,armadores,user}){
               <span style={{color:"#94A3B8",fontSize:12,padding:"4px 2px"}}>{isExp?"▴":"▾"}</span>
             </div>
           </div>
-          {/* Tentativas (expandido) */}
+          {/* Processos anexados (expandido) */}
           {isExp&&<div style={{padding:"12px 14px",background:"#fff"}}>
-            <p style={{...lS,marginBottom:8}}>Tentativas ({tents.length})</p>
-            {tents.length===0&&<p style={{fontSize:11,color:"#94A3B8",marginBottom:10,fontStyle:"italic"}}>Nenhuma tentativa registrada ainda. Adicione abaixo conforme o time for contatando os armadores.</p>}
-            {tents.map(t=>{const ts=TENT_ST[t.status||"Aguardando"];return(
+            <p style={{...lS,marginBottom:8}}>Processos anexados ({tents.length})</p>
+            {tents.length===0&&<p style={{fontSize:11,color:"#94A3B8",marginBottom:10,fontStyle:"italic"}}>Nenhum processo anexado ainda. Adicione abaixo os bookings deste navio.</p>}
+            {tents.map(t=>{const ts=TENT_ST[t.status||"Solicitado"]||TENT_ST.Solicitado;return(
               <div key={t.id} style={{padding:"8px 10px",borderRadius:8,background:"#F8FAFC",border:`1px solid ${ts.bd}`,marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
-                    <span style={{padding:"1px 6px",borderRadius:10,fontSize:9,fontWeight:700,background:`${aC(t.armador)}12`,color:aC(t.armador)}}>{t.armador}</span>
-                    <span style={{padding:"1px 6px",borderRadius:10,fontSize:8,fontWeight:700,background:ts.bg,color:ts.c,border:`1px solid ${ts.bd}`}}>{ts.i} {t.status}</span>
-                    {t.bookingNumber&&<span style={{fontSize:10,color:"#1E293B",fontWeight:600}}>BKG: {t.bookingNumber}</span>}
-                    {t.navio&&<span style={{fontSize:10,color:"#0F766E"}}>🚢 {t.navio}</span>}
-                  </div>
-                  {t.obs&&<p style={{fontSize:10,color:"#64748B"}}>{t.obs}</p>}
-                  <p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{t.by} · {fDt(t.at)}</p>
+                <div style={{flex:1,minWidth:0,display:"grid",gridTemplateColumns:"1fr 80px 1fr auto",gap:6,alignItems:"center"}}>
+                  <input value={t.bookingNumber||""} onChange={e=>updTent(sol.id,t.id,{bookingNumber:e.target.value})} placeholder="Nº Booking" style={{...iS,padding:"5px 8px",fontSize:11}}/>
+                  <input type="number" min={1} value={t.equipQty||1} onChange={e=>updTent(sol.id,t.id,{equipQty:Math.max(1,parseInt(e.target.value)||1)})} style={{...iS,padding:"5px 8px",fontSize:11}}/>
+                  <input value={t.equipType||""} onChange={e=>updTent(sol.id,t.id,{equipType:e.target.value})} placeholder="Tipo equipamento" style={{...iS,padding:"5px 8px",fontSize:11}}/>
+                  <select value={t.status||"Solicitado"} onChange={e=>setTentStatus(sol.id,t.id,e.target.value)} style={{...selS,padding:"5px 24px 5px 8px",fontSize:10,background:ts.bg,color:ts.c,border:`1px solid ${ts.bd}`,fontWeight:700,minWidth:170}}>
+                    {PROC_STATUSES.map(st=><option key={st} value={st}>{(TENT_ST[st]?.i||"")} {st}</option>)}
+                  </select>
                 </div>
-                <div style={{display:"flex",gap:3,flexShrink:0}}>
-                  {t.status!=="Aguardando"&&<button onClick={()=>setTentStatus(sol.id,t.id,"Aguardando")} title="Marcar aguardando" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>⏳</button>}
-                  {t.status!=="Confirmado"&&<button onClick={()=>setTentStatus(sol.id,t.id,"Confirmado")} title="Confirmar" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>✅</button>}
-                  {t.status!=="Recusado"&&<button onClick={()=>setTentStatus(sol.id,t.id,"Recusado")} title="Recusado" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #FECACA",background:"#FEE2E2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>❌</button>}
-                  <button onClick={()=>delTent(sol.id,t.id)} title="Remover" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:"#94A3B8",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+                <div style={{display:"flex",gap:3,flexShrink:0,alignItems:"center"}}>
+                  <span style={{fontSize:9,color:"#94A3B8"}}>{t.by}</span>
+                  <button onClick={()=>delTent(sol.id,t.id)} title="Remover" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:"#94A3B8",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
                 </div>
               </div>
             )})}
-            {/* Formulário inline para nova tentativa */}
+            {/* Formulário inline para novo processo */}
             <div style={{padding:10,borderRadius:8,background:"#F5F3FF",border:"1px dashed #C4B5FD",marginTop:8}}>
-              <p style={{fontSize:10,color:"#7C3AED",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>+ Nova Tentativa</p>
-              <div style={{display:"grid",gridTemplateColumns:"140px 1fr 1fr",gap:6,marginBottom:6}}>
-                <select value={form.armador} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,armador:e.target.value}}))} style={{...selS,padding:"6px 10px",fontSize:11}}>{arms.map(a=><option key={a}>{a}</option>)}</select>
-                <input value={form.bookingNumber} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,bookingNumber:e.target.value}}))} placeholder="Nº Booking (opcional)" style={{...iS,padding:"6px 10px",fontSize:11}}/>
-                <input value={form.navio} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,navio:e.target.value}}))} placeholder="Navio (opcional)" style={{...iS,padding:"6px 10px",fontSize:11}}/>
-              </div>
-              <div style={{display:"flex",gap:6}}>
-                <input value={form.obs} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,obs:e.target.value}}))} placeholder="Observação (ex: aguardando retorno, cotação enviada...)" style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter")addTentativa(sol.id)}}/>
+              <p style={{fontSize:10,color:"#7C3AED",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>+ Anexar Processo</p>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 80px 1fr 170px auto",gap:6,alignItems:"center"}}>
+                <input value={form.bookingNumber} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,bookingNumber:e.target.value}}))} placeholder="Nº Booking" style={{...iS,padding:"6px 10px",fontSize:11}}/>
+                <input type="number" min={1} value={form.equipQty} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,equipQty:Math.max(1,parseInt(e.target.value)||1)}}))} placeholder="Qtd" style={{...iS,padding:"6px 10px",fontSize:11}}/>
+                <input value={form.equipType} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,equipType:e.target.value}}))} placeholder="Tipo equipamento (livre)" style={{...iS,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter")addTentativa(sol.id)}}/>
+                <select value={form.status||"Solicitado"} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,status:e.target.value}}))} style={{...selS,padding:"6px 24px 6px 10px",fontSize:11}}>
+                  {PROC_STATUSES.map(st=><option key={st} value={st}>{st}</option>)}
+                </select>
                 <button onClick={()=>addTentativa(sol.id)} style={{...bP,background:"#7C3AED",padding:"6px 14px",fontSize:11}}>+ Adicionar</button>
               </div>
             </div>
@@ -892,8 +897,8 @@ function SolicitacoesPanel({data,setData,armadores,user}){
       })}
     </div>}
 
-    {showNew&&<NovaSolicitacaoModal onClose={()=>setShowNew(false)} onSave={addSol}/>}
-    {editSol&&<NovaSolicitacaoModal initial={editSol} onClose={()=>setEditSol(null)} onSave={f=>{updSol(editSol.id,f);setEditSol(null)}}/>}
+    {showNew&&<NovaSolicitacaoModal armadores={armadores} onClose={()=>setShowNew(false)} onSave={addSol}/>}
+    {editSol&&<NovaSolicitacaoModal armadores={armadores} initial={editSol} onClose={()=>setEditSol(null)} onSave={f=>{updSol(editSol.id,f);setEditSol(null)}}/>}
   </div>);
 }
 
