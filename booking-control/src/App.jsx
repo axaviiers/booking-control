@@ -460,14 +460,14 @@ function Notifications({bookings,ships,armadores,notifPerm,onRequestPerm}){
       });
     });
   });
-  // Cancelamento: alerta APENAS 1 dia antes ou no dia (todos os armadores, independente de ddlDays)
+  // Cancelamento: alerta APENAS 2 dias antes, 1 dia antes e no dia (todos os armadores, independente de ddlDays)
   ships.forEach(s=>{
     if(!s.dataCancelamento)return;
     const dc=dUntil(s.dataCancelamento);
-    if(dc===null||dc<0||dc>1)return;
+    if(dc===null||dc<0||dc>2)return;
     const id=`cancel-${s.id}`;
-    const lbl=dc===0?"HOJE":"AMANHÃ";
-    notes.push({id,msg:`⚠️ ${s.armador||""} — "${s.nome}": Cancelamento da reserva ${lbl}! (${fD(s.dataCancelamento)})`,color:aC(s.armador||""),bg:"#FFF7ED",bd:"#FED7AA",critical:true});
+    const lbl=dc===0?"HOJE":dc===1?"AMANHÃ":`em ${dc} dias`;
+    notes.push({id,msg:`⚠️ ${s.armador||""} — "${s.nome}": Cancelamento da reserva ${lbl}! (${fD(s.dataCancelamento)})`,color:aC(s.armador||""),bg:"#FFF7ED",bd:"#FED7AA",critical:dc<=1});
   });
   const visible=notes.filter(n=>!dismissed[n.id]);
   if(!visible.length&&notifPerm==="granted")return null;
@@ -489,15 +489,12 @@ function BookingsPanel({data,setData,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[sel,setSel]=useState(null);const[filter,setFilter]=useState("Todos");const[tick,setTick]=useState(0);
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),1000);return()=>clearInterval(i)},[]);
   // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 1h, trashed after 5 days
-  // ⚠️ AUTO-PURGE DESTRUTIVO DESATIVADO (abril/2026)
-  // Antes: bookings "Aprovado" eram apagados depois de 3 dias e
-  // "Enviado ao cliente" depois de 1 hora — sem ir pra lixeira.
-  // Isso causava sumiço de dados horas após o lançamento.
-  // Agora: nada é apagado automaticamente. A limpeza é manual via lixeira.
-  // useEffect(()=>{
-  //   const shouldClean=A(data).some(r=>isExp(r)||isEnvExp(r)||isTrashExp(r));
-  //   if(shouldClean)setData(prev=>A(prev).filter(r=>!isExp(r)&&!isEnvExp(r)&&!isTrashExp(r)));
-  // },[data]);
+  // Auto-purge APENAS "Enviado ao cliente" após 1h (abril/2026).
+  // Aprovado e Lixeira não são mais apagados automaticamente.
+  useEffect(()=>{
+    const shouldClean=A(data).some(r=>isEnvExp(r));
+    if(shouldClean)setData(prev=>A(prev).filter(r=>!isEnvExp(r)));
+  },[data]);
   const active=A(data).filter(r=>!isTrashed(r));
   const activeNoEnv=active.filter(r=>r.status!=="Enviado ao cliente");
   const escC=activeNoEnv.filter(isEsc).length,urgC=activeNoEnv.filter(isUrg).length;
@@ -644,7 +641,194 @@ function LixeiraPanel({data,setData}){
   </div>);
 }
 
-function StandbyPanel({ships,setShips,armadores,setArmadores,user}){
+// ═════════════════════════════════════════════
+// SOLICITAÇÕES (Stand-by) — pedidos multi-armador + tentativas
+// ═════════════════════════════════════════════
+const SOL_ST={
+  Aberto:    {c:"#7C3AED",bg:"#F5F3FF",bd:"#E9D5FF",i:"📋"},
+  Confirmado:{c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0",i:"✅"},
+  Cancelado: {c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA",i:"🚫"},
+};
+const TENT_ST={
+  Aguardando:{c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A",i:"⏳"},
+  Confirmado:{c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0",i:"✅"},
+  Recusado:  {c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA",i:"❌"},
+};
+
+function NovaSolicitacaoModal({onClose,onSave,initial}){
+  const d=initial||{};
+  const[f,setF]=useState({
+    client:d.client||"",clientRef:d.clientRef||"",subject:d.subject||"",
+    equipQty:d.equipQty||1,equipType:d.equipType||EQ[0],
+    pol:d.pol||"",pod:d.pod||"",dataDesejada:d.dataDesejada||"",
+    observation:d.observation||""
+  });
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  const canSave=f.client&&f.subject&&f.pol&&f.pod;
+  return(<Modal onClose={onClose} wide>
+    <h2 style={{color:"#7C3AED",fontSize:17,fontWeight:700,marginBottom:4}}>📋 {initial?"Editar":"Nova"} Solicitação</h2>
+    <p style={{color:"#94A3B8",fontSize:12,marginBottom:16}}>Pedido de reserva a ser oferecido a múltiplos armadores</p>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+      <div><label style={lS}>Cliente *</label><input value={f.client} onChange={e=>s("client",e.target.value)} style={iS}/></div>
+      <div><label style={lS}>Referência</label><input value={f.clientRef} onChange={e=>s("clientRef",e.target.value)} style={iS}/></div>
+    </div>
+    <div style={{marginBottom:10}}><label style={lS}>Assunto / Carga *</label><input value={f.subject} onChange={e=>s("subject",e.target.value)} style={iS}/></div>
+    <div style={{display:"grid",gridTemplateColumns:"80px 1fr",gap:10,marginBottom:10}}>
+      <div><label style={lS}>Qtd</label><input type="number" min={1} value={f.equipQty} onChange={e=>s("equipQty",Math.max(1,parseInt(e.target.value)||1))} style={iS}/></div>
+      <div><label style={lS}>Equipamento</label><select value={f.equipType} onChange={e=>s("equipType",e.target.value)} style={selS}>{EQ.map(t=><option key={t}>{t}</option>)}</select></div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+      <div><label style={lS}>POL *</label><input value={f.pol} onChange={e=>s("pol",e.target.value)} style={iS}/></div>
+      <div><label style={lS}>POD *</label><input value={f.pod} onChange={e=>s("pod",e.target.value)} style={iS}/></div>
+    </div>
+    <div style={{marginBottom:10}}><label style={lS}>Data Desejada de Saída</label><input type="date" value={f.dataDesejada} onChange={e=>s("dataDesejada",e.target.value)} style={iS}/></div>
+    <div style={{marginBottom:16}}><label style={lS}>Observações</label><textarea value={f.observation} onChange={e=>s("observation",e.target.value)} rows={3} style={{...iS,resize:"vertical"}}/></div>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+      <button onClick={onClose} style={bG}>Cancelar</button>
+      <button onClick={()=>canSave&&onSave(f)} style={{...bP,background:"#7C3AED",opacity:canSave?1:.5}}>Salvar</button>
+    </div>
+  </Modal>);
+}
+
+function SolicitacoesPanel({data,setData,armadores,user}){
+  const[showNew,setShowNew]=useState(false);const[editSol,setEditSol]=useState(null);
+  const[filter,setFilter]=useState("Aberto");const[expanded,setExpanded]=useState({});
+  const[tf,setTf]=useState({}); // tentativa form per solicitacao
+  const arms=armadores.map(a=>a.name);
+  const active=A(data).filter(s=>!s.deletedAt);
+  const counts={
+    Aberto:active.filter(s=>(s.status||"Aberto")==="Aberto").length,
+    Confirmado:active.filter(s=>s.status==="Confirmado").length,
+    Cancelado:active.filter(s=>s.status==="Cancelado").length,
+  };
+  const filtered=filter==="Todas"?active:active.filter(s=>(s.status||"Aberto")===filter);
+
+  const addSol=(f)=>{
+    const uid=`SOL-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2,5).toUpperCase()}`;
+    setData(prev=>[{id:uid,status:"Aberto",createdAt:Date.now(),updatedAt:Date.now(),createdBy:user.name,tentativas:[],...f},...A(prev)]);
+    setShowNew(false);
+  };
+  const updSol=(id,patch)=>setData(prev=>A(prev).map(s=>s.id===id?{...s,...patch,updatedAt:Date.now()}:s));
+  const delSol=(id)=>{if(window.confirm("Excluir esta solicitação?"))updSol(id,{deletedAt:Date.now(),deletedBy:user.name})};
+
+  const addTentativa=(solId)=>{
+    const form=tf[solId]||{};
+    if(!form.armador)return;
+    const tent={id:`TN-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2,4).toUpperCase()}`,armador:form.armador,bookingNumber:form.bookingNumber||"",navio:form.navio||"",status:"Aguardando",obs:form.obs||"",by:user.name,at:Date.now()};
+    setData(prev=>A(prev).map(s=>s.id===solId?{...s,tentativas:[...A(s.tentativas),tent],updatedAt:Date.now()}:s));
+    setTf(p=>({...p,[solId]:{armador:arms[0]||"",bookingNumber:"",navio:"",obs:""}}));
+  };
+  const setTentStatus=(solId,tentId,newStatus)=>{
+    setData(prev=>A(prev).map(s=>{
+      if(s.id!==solId)return s;
+      const tentativas=A(s.tentativas).map(t=>t.id===tentId?{...t,status:newStatus}:t);
+      // Se alguma tentativa foi confirmada, a solicitação passa para Confirmado automaticamente
+      const anyConfirmed=tentativas.some(t=>t.status==="Confirmado");
+      return{...s,tentativas,status:anyConfirmed?"Confirmado":(s.status==="Confirmado"?"Aberto":s.status||"Aberto"),updatedAt:Date.now()};
+    }));
+  };
+  const delTent=(solId,tentId)=>{
+    if(!window.confirm("Remover esta tentativa?"))return;
+    setData(prev=>A(prev).map(s=>s.id===solId?{...s,tentativas:A(s.tentativas).filter(t=>t.id!==tentId),updatedAt:Date.now()}:s));
+  };
+
+  return(<div>
+    {/* Summary */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+      <div style={{display:"flex",gap:8}}>
+        <div onClick={()=>setFilter("Aberto")} style={{padding:"10px 18px",borderRadius:10,background:"#F5F3FF",border:`1px solid ${filter==="Aberto"?"#7C3AED":"#E9D5FF"}`,textAlign:"center",cursor:"pointer"}}><p style={{fontSize:20,fontWeight:700,color:"#7C3AED"}}>{counts.Aberto}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#5B21B6"}}>Abertas</p></div>
+        <div onClick={()=>setFilter("Confirmado")} style={{padding:"10px 18px",borderRadius:10,background:"#D1FAE5",border:`1px solid ${filter==="Confirmado"?"#047857":"#A7F3D0"}`,textAlign:"center",cursor:"pointer"}}><p style={{fontSize:20,fontWeight:700,color:"#047857"}}>{counts.Confirmado}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#065F46"}}>Confirmadas</p></div>
+        <div onClick={()=>setFilter("Cancelado")} style={{padding:"10px 18px",borderRadius:10,background:"#FEE2E2",border:`1px solid ${filter==="Cancelado"?"#DC2626":"#FECACA"}`,textAlign:"center",cursor:"pointer"}}><p style={{fontSize:20,fontWeight:700,color:"#DC2626"}}>{counts.Cancelado}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#991B1B"}}>Canceladas</p></div>
+        <div onClick={()=>setFilter("Todas")} style={{padding:"10px 18px",borderRadius:10,background:"#F8FAFC",border:`1px solid ${filter==="Todas"?"#475569":"#E2E8F0"}`,textAlign:"center",cursor:"pointer"}}><p style={{fontSize:20,fontWeight:700,color:"#475569"}}>{active.length}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#64748B"}}>Todas</p></div>
+      </div>
+      <button onClick={()=>setShowNew(true)} style={{...bP,background:"#7C3AED",padding:"8px 16px",fontSize:11}}>+ Nova Solicitação</button>
+    </div>
+
+    {/* Lista de solicitações */}
+    {filtered.length===0?<div style={{padding:48,textAlign:"center",color:"#94A3B8",fontSize:13,background:"#fff",border:"1px solid #E2E8F0",borderRadius:10}}>Nenhuma solicitação {filter==="Todas"?"":`com status "${filter}"`}</div>:
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {filtered.map(sol=>{
+        const st=SOL_ST[sol.status||"Aberto"];
+        const tents=A(sol.tentativas);
+        const isExp=!!expanded[sol.id];
+        const form=tf[sol.id]||{armador:arms[0]||"",bookingNumber:"",navio:"",obs:""};
+        return(<div key={sol.id} style={{background:"#fff",border:`1px solid ${st.bd}`,borderRadius:10,overflow:"hidden"}}>
+          {/* Header da solicitação */}
+          <div style={{padding:"12px 14px",background:st.bg,borderBottom:isExp?`1px solid ${st.bd}`:"none",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,cursor:"pointer"}} onClick={()=>setExpanded(p=>({...p,[sol.id]:!p[sol.id]}))}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
+                <span style={{padding:"2px 8px",borderRadius:12,fontSize:9,fontWeight:700,background:"#fff",color:st.c,border:`1px solid ${st.bd}`}}>{st.i} {sol.status||"Aberto"}</span>
+                <span style={{fontSize:9,color:"#94A3B8",fontWeight:600}}>{sol.id}</span>
+                <span style={{fontSize:13,fontWeight:700,color:"#1E293B"}}>{sol.client}</span>
+                {sol.clientRef&&<span style={{fontSize:10,color:"#64748B"}}>(Ref: {sol.clientRef})</span>}
+              </div>
+              <p style={{fontSize:12,color:"#475569",marginBottom:4}}>{sol.subject}</p>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:10,color:"#64748B"}}>
+                <span>📦 {sol.equipQty}x {sol.equipType}</span>
+                <span>🚢 {sol.pol} → 📍 {sol.pod}</span>
+                {sol.dataDesejada&&<span>📅 {fD(sol.dataDesejada)}</span>}
+                <span>👤 {sol.createdBy}</span>
+                <span style={{padding:"1px 6px",borderRadius:8,background:tents.length>0?"#DBEAFE":"#F1F5F9",color:tents.length>0?"#1D4ED8":"#94A3B8",fontWeight:600}}>{tents.length} tentativa{tents.length!==1?"s":""}</span>
+              </div>
+              {sol.observation&&<p style={{fontSize:10,color:"#64748B",marginTop:4,fontStyle:"italic"}}>"{sol.observation}"</p>}
+            </div>
+            <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+              <button onClick={()=>setEditSol(sol)} title="Editar" style={{background:"none",border:"none",color:"#64748B",cursor:"pointer",fontSize:12,padding:"4px 6px"}}>✏️</button>
+              {sol.status!=="Cancelado"&&<button onClick={()=>updSol(sol.id,{status:"Cancelado"})} title="Cancelar" style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",fontSize:12,padding:"4px 6px"}}>🚫</button>}
+              {sol.status==="Cancelado"&&<button onClick={()=>updSol(sol.id,{status:"Aberto"})} title="Reabrir" style={{background:"none",border:"none",color:"#7C3AED",cursor:"pointer",fontSize:12,padding:"4px 6px"}}>↩️</button>}
+              <button onClick={()=>delSol(sol.id)} title="Excluir" style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:12,padding:"4px 6px"}}>🗑</button>
+              <span style={{color:"#94A3B8",fontSize:12,padding:"4px 2px"}}>{isExp?"▴":"▾"}</span>
+            </div>
+          </div>
+          {/* Tentativas (expandido) */}
+          {isExp&&<div style={{padding:"12px 14px",background:"#fff"}}>
+            <p style={{...lS,marginBottom:8}}>Tentativas ({tents.length})</p>
+            {tents.length===0&&<p style={{fontSize:11,color:"#94A3B8",marginBottom:10,fontStyle:"italic"}}>Nenhuma tentativa registrada ainda. Adicione abaixo conforme o time for contatando os armadores.</p>}
+            {tents.map(t=>{const ts=TENT_ST[t.status||"Aguardando"];return(
+              <div key={t.id} style={{padding:"8px 10px",borderRadius:8,background:"#F8FAFC",border:`1px solid ${ts.bd}`,marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
+                    <span style={{padding:"1px 6px",borderRadius:10,fontSize:9,fontWeight:700,background:`${aC(t.armador)}12`,color:aC(t.armador)}}>{t.armador}</span>
+                    <span style={{padding:"1px 6px",borderRadius:10,fontSize:8,fontWeight:700,background:ts.bg,color:ts.c,border:`1px solid ${ts.bd}`}}>{ts.i} {t.status}</span>
+                    {t.bookingNumber&&<span style={{fontSize:10,color:"#1E293B",fontWeight:600}}>BKG: {t.bookingNumber}</span>}
+                    {t.navio&&<span style={{fontSize:10,color:"#0F766E"}}>🚢 {t.navio}</span>}
+                  </div>
+                  {t.obs&&<p style={{fontSize:10,color:"#64748B"}}>{t.obs}</p>}
+                  <p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{t.by} · {fDt(t.at)}</p>
+                </div>
+                <div style={{display:"flex",gap:3,flexShrink:0}}>
+                  {t.status!=="Aguardando"&&<button onClick={()=>setTentStatus(sol.id,t.id,"Aguardando")} title="Marcar aguardando" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>⏳</button>}
+                  {t.status!=="Confirmado"&&<button onClick={()=>setTentStatus(sol.id,t.id,"Confirmado")} title="Confirmar" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>✅</button>}
+                  {t.status!=="Recusado"&&<button onClick={()=>setTentStatus(sol.id,t.id,"Recusado")} title="Recusado" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #FECACA",background:"#FEE2E2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>❌</button>}
+                  <button onClick={()=>delTent(sol.id,t.id)} title="Remover" style={{padding:"3px 6px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:"#94A3B8",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button>
+                </div>
+              </div>
+            )})}
+            {/* Formulário inline para nova tentativa */}
+            <div style={{padding:10,borderRadius:8,background:"#F5F3FF",border:"1px dashed #C4B5FD",marginTop:8}}>
+              <p style={{fontSize:10,color:"#7C3AED",fontWeight:700,textTransform:"uppercase",marginBottom:6}}>+ Nova Tentativa</p>
+              <div style={{display:"grid",gridTemplateColumns:"140px 1fr 1fr",gap:6,marginBottom:6}}>
+                <select value={form.armador} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,armador:e.target.value}}))} style={{...selS,padding:"6px 10px",fontSize:11}}>{arms.map(a=><option key={a}>{a}</option>)}</select>
+                <input value={form.bookingNumber} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,bookingNumber:e.target.value}}))} placeholder="Nº Booking (opcional)" style={{...iS,padding:"6px 10px",fontSize:11}}/>
+                <input value={form.navio} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,navio:e.target.value}}))} placeholder="Navio (opcional)" style={{...iS,padding:"6px 10px",fontSize:11}}/>
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <input value={form.obs} onChange={e=>setTf(p=>({...p,[sol.id]:{...form,obs:e.target.value}}))} placeholder="Observação (ex: aguardando retorno, cotação enviada...)" style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter")addTentativa(sol.id)}}/>
+                <button onClick={()=>addTentativa(sol.id)} style={{...bP,background:"#7C3AED",padding:"6px 14px",fontSize:11}}>+ Adicionar</button>
+              </div>
+            </div>
+          </div>}
+        </div>)
+      })}
+    </div>}
+
+    {showNew&&<NovaSolicitacaoModal onClose={()=>setShowNew(false)} onSave={addSol}/>}
+    {editSol&&<NovaSolicitacaoModal initial={editSol} onClose={()=>setEditSol(null)} onSave={f=>{updSol(editSol.id,f);setEditSol(null)}}/>}
+  </div>);
+}
+
+function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,setArmadores,user}){
+  const[view,setView]=useState("navios"); // "navios" | "solicitacoes"
   const[showNew,setShowNew]=useState(false);const[editShip,setEditShip]=useState(null);const[addBkgTo,setAddBkgTo]=useState(null);
   const[editBkg,setEditBkg]=useState(null);const[editBkgShip,setEditBkgShip]=useState(null);
   const addArmador=(newArm)=>{if(setArmadores)setArmadores(prev=>[...prev,newArm])};
@@ -676,7 +860,21 @@ function StandbyPanel({ships,setShips,armadores,setArmadores,user}){
   const thS={padding:"8px 10px",textAlign:"left",color:"#fff",fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:".3px",whiteSpace:"nowrap",position:"sticky",top:0};
   const tdS={padding:"8px 10px",fontSize:11,color:"#1E293B",borderBottom:"1px solid #F1F5F9",whiteSpace:"nowrap"};
 
+  // Sub-nav: Navios | Solicitações
+  const openSolCount=A(solicitacoes).filter(s=>!s.deletedAt&&(s.status||"Aberto")==="Aberto").length;
+  const SubNav=(
+    <div style={{display:"flex",gap:6,marginBottom:16,borderBottom:"1px solid #E2E8F0"}}>
+      <button onClick={()=>setView("navios")} style={{padding:"9px 18px",borderRadius:"8px 8px 0 0",border:view==="navios"?"2px solid #0F766E":"2px solid transparent",borderBottom:view==="navios"?"2px solid #fff":"2px solid transparent",background:view==="navios"?"#F0FDFA":"transparent",color:view==="navios"?"#0F766E":"#94A3B8",fontSize:12,fontWeight:view==="navios"?700:500,cursor:"pointer",fontFamily:"inherit",marginBottom:"-1px"}}>🚢 Navios</button>
+      <button onClick={()=>setView("solicitacoes")} style={{padding:"9px 18px",borderRadius:"8px 8px 0 0",border:view==="solicitacoes"?"2px solid #7C3AED":"2px solid transparent",borderBottom:view==="solicitacoes"?"2px solid #fff":"2px solid transparent",background:view==="solicitacoes"?"#F5F3FF":"transparent",color:view==="solicitacoes"?"#7C3AED":"#94A3B8",fontSize:12,fontWeight:view==="solicitacoes"?700:500,cursor:"pointer",fontFamily:"inherit",marginBottom:"-1px",display:"flex",alignItems:"center",gap:6}}>📋 Solicitações{openSolCount>0&&<span style={{padding:"1px 6px",borderRadius:8,background:view==="solicitacoes"?"#7C3AED":"#E2E8F0",color:view==="solicitacoes"?"#fff":"#94A3B8",fontSize:9,fontWeight:700}}>{openSolCount}</span>}</button>
+    </div>
+  );
+
+  if(view==="solicitacoes"){
+    return(<div>{SubNav}<SolicitacoesPanel data={solicitacoes} setData={setSolicitacoes} armadores={armadores} user={user}/></div>);
+  }
+
   return(<div>
+    {SubNav}
     {/* Summary cards */}
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <div style={{display:"flex",gap:10}}>
@@ -832,7 +1030,7 @@ function BackupRecovery({onClose,onRestore}){
 // ═════════════════════════════════════════════
 export default function App(){
   const[user,setUser]=useState(null);const[tab,setTab]=useState("bookings");const[loaded,setLoaded]=useState(false);
-  const[bookings,setBookings]=useState([]);const[pendencias,setPendencias]=useState([]);const[ships,setShips]=useState([]);
+  const[bookings,setBookings]=useState([]);const[pendencias,setPendencias]=useState([]);const[ships,setShips]=useState([]);const[solicitacoes,setSolicitacoes]=useState([]);
   const[users,setUsers]=useState(USR_DEF);const[armadores,setArmadores]=useState(ARM_DEF);const[logo,setLogo]=useState(null);
   const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);const[showBackups,setShowBackups]=useState(false);
   const[refreshing,setRefreshing]=useState(false);const[online,setOnline]=useState(!!supabase);
@@ -868,6 +1066,7 @@ export default function App(){
     if(d.bookings)  setBookings(prev=>mergeArr(prev,d.bookings));
     if(d.pendencias)setPendencias(prev=>mergeArr(prev,d.pendencias));
     if(d.ships)     setShips(prev=>mergeArr(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
+    if(d.solicitacoes)setSolicitacoes(prev=>mergeArr(prev,d.solicitacoes));
     if(d.users){
       const merged=[...(d.users||[])];
       USR_DEF.forEach(def=>{if(!merged.find(u=>u.username===def.username))merged.push(def)});
@@ -888,6 +1087,7 @@ export default function App(){
         if(d.bookings)  setBookings(dedupeById(d.bookings));
         if(d.pendencias)setPendencias(dedupeById(d.pendencias));
         if(d.ships)     setShips(dedupeById(d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
+        if(d.solicitacoes)setSolicitacoes(dedupeById(d.solicitacoes));
         const u=[...(d.users||[])];
         USR_DEF.forEach(def=>{if(!u.find(x=>x.username===def.username))u.push(def)});
         if(u.length)setUsers(u);
@@ -905,6 +1105,7 @@ export default function App(){
           if(d.bookings)setBookings(dedupeById(d.bookings));
           if(d.pendencias)setPendencias(dedupeById(d.pendencias));
           if(d.ships)setShips(dedupeById(d.ships));
+          if(d.solicitacoes)setSolicitacoes(dedupeById(d.solicitacoes));
           if(d.users?.length)setUsers(d.users);
           if(d.armadores?.length)setArmadores(d.armadores);
           if(d.logo!==undefined)setLogo(d.logo);
@@ -925,7 +1126,8 @@ export default function App(){
     const cleanBookings=dedupeById(bookings);
     const cleanPendencias=dedupeById(pendencias);
     const cleanShips=dedupeById(ships);
-    const state={bookings:cleanBookings,pendencias:cleanPendencias,ships:cleanShips,users,armadores,logo};
+    const cleanSolicitacoes=dedupeById(solicitacoes);
+    const state={bookings:cleanBookings,pendencias:cleanPendencias,ships:cleanShips,solicitacoes:cleanSolicitacoes,users,armadores,logo};
     // Salvamento local imediato (não-bloqueante)
     try{localStorage.setItem("booking-control-data",JSON.stringify(state))}catch(e){console.warn("localStorage save failed",e)}
     // Backup rotativo a cada 2 minutos de atividade
@@ -946,9 +1148,10 @@ export default function App(){
             // Se o merge no servidor trouxe dados de outros usuários, aplica de volta
             if(res.data){
               applyingRemoteRef.current=true;
-              if(res.data.bookings)  setBookings(dedupeById(res.data.bookings));
-              if(res.data.pendencias)setPendencias(dedupeById(res.data.pendencias));
-              if(res.data.ships)     setShips(dedupeById(res.data.ships));
+              if(res.data.bookings)    setBookings(dedupeById(res.data.bookings));
+              if(res.data.pendencias)  setPendencias(dedupeById(res.data.pendencias));
+              if(res.data.ships)       setShips(dedupeById(res.data.ships));
+              if(res.data.solicitacoes)setSolicitacoes(dedupeById(res.data.solicitacoes));
               setTimeout(()=>{applyingRemoteRef.current=false},80);
             }
           }else{
@@ -961,7 +1164,7 @@ export default function App(){
         }
       },500);
     }
-  },[bookings,pendencias,ships,users,armadores,logo,loaded]);
+  },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded]);
 
   // REALTIME — sempre aplica (merge cuida da consistência, sem janela de 4s)
   useEffect(()=>{
@@ -1005,14 +1208,14 @@ export default function App(){
           });
         });
       });
-      // Cancelamento de reserva: alerta APENAS 1 dia antes e no dia (todos os armadores, independente de ddlDays)
+      // Cancelamento de reserva: alerta APENAS 2 dias antes, 1 dia antes e no dia (todos os armadores, independente de ddlDays)
       ships.forEach(s=>{
         if(!s.dataCancelamento)return;
         const dc=dUntil(s.dataCancelamento);
-        if(dc===null||dc<0||dc>1)return;
+        if(dc===null||dc<0||dc>2)return;
         const key=`cancel-${s.id}-${dc}`;
         if(notifiedRef.current[key])return;
-        const lbl=dc===0?"HOJE":"AMANHÃ";
+        const lbl=dc===0?"HOJE":dc===1?"AMANHÃ":`em ${dc} dias`;
         alerts.push({
           title:`⚠️ Cancelamento ${lbl}!`,
           body:`${s.armador||""} — "${s.nome}": Data de cancelamento ${fD(s.dataCancelamento)}`,
@@ -1092,7 +1295,7 @@ export default function App(){
         <Notifications bookings={bookings} ships={ships} armadores={armadores} notifPerm={notifPerm} onRequestPerm={()=>{if("Notification" in window)Notification.requestPermission().then(p=>setNotifPerm(p))}}/>
         {tab==="bookings"&&<BookingsPanel data={bookings} setData={setBookings} armadores={armadores} user={user}/>}
         {tab==="pendencias"&&<PendenciasPanel data={pendencias} setData={setPendencias} user={user}/>}
-        {tab==="standby"&&<StandbyPanel ships={ships} setShips={setShips} armadores={armadores} setArmadores={setArmadores} user={user}/>}
+        {tab==="standby"&&<StandbyPanel ships={ships} setShips={setShips} solicitacoes={solicitacoes} setSolicitacoes={setSolicitacoes} armadores={armadores} setArmadores={setArmadores} user={user}/>}
         {tab==="lixeira"&&<LixeiraPanel data={bookings} setData={setBookings}/>}
       </div>
       {showUsers&&<UserManager users={users} onSave={l=>{setUsers(l);setShowUsers(false)}} onClose={()=>setShowUsers(false)}/>}
@@ -1101,11 +1304,12 @@ export default function App(){
       {showBackups&&<BackupRecovery onClose={()=>setShowBackups(false)} onRestore={(s)=>{
         if(!window.confirm("Restaurar este backup? O estado atual será substituído (uma cópia de segurança do estado atual é feita automaticamente)."))return;
         // Salva snapshot do estado atual antes de restaurar
-        pushLocalBackup({bookings,pendencias,ships,users,armadores,logo});
+        pushLocalBackup({bookings,pendencias,ships,solicitacoes,users,armadores,logo});
         applyingRemoteRef.current=true;
         if(s.bookings)setBookings(dedupeById(s.bookings));
         if(s.pendencias)setPendencias(dedupeById(s.pendencias));
         if(s.ships)setShips(dedupeById(s.ships));
+        if(s.solicitacoes)setSolicitacoes(dedupeById(s.solicitacoes));
         if(s.users?.length)setUsers(s.users);
         if(s.armadores?.length)setArmadores(s.armadores);
         if(s.logo!==undefined)setLogo(s.logo);
