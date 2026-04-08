@@ -32,9 +32,10 @@ export function mergeStates(remote, local) {
   if (!remote) return local
   if (!local)  return remote
   return {
-    bookings:   mergeCollection(remote.bookings,   local.bookings),
-    pendencias: mergeCollection(remote.pendencias, local.pendencias),
-    ships:      mergeCollection(remote.ships,      local.ships),
+    bookings:    mergeCollection(remote.bookings,    local.bookings),
+    pendencias:  mergeCollection(remote.pendencias,  local.pendencias),
+    ships:       mergeCollection(remote.ships,       local.ships),
+    solicitacoes:mergeCollection(remote.solicitacoes,local.solicitacoes),
     users:      (local.users     && local.users.length)     ? local.users     : remote.users,
     armadores:  (local.armadores && local.armadores.length) ? local.armadores : remote.armadores,
     logo:       local.logo !== undefined ? local.logo : remote.logo,
