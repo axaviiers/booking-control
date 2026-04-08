@@ -458,12 +458,16 @@ function Notifications({bookings,ships,armadores,notifPerm,onRequestPerm}){
           notes.push({id,msg:`⏰ ${arm.name} — "${s.nome}" BKG ${b.bookingNumber||"s/n"}: DDL carga em ${d}d! (${fD(b.deadlineCarga)})`,color:aC(arm.name),bg:"#FEF2F2",bd:"#FECACA",critical:d<=1});
         }
       });
-      const dc=dUntil(s.dataCancelamento);
-      if(dc!==null&&dc<=arm.ddlDays&&dc>=0){
-        const id=`cancel-${s.id}`;
-        notes.push({id,msg:`⚠️ ${arm.name} — "${s.nome}": Cancelamento reserva em ${dc}d! (${fD(s.dataCancelamento)})`,color:aC(arm.name),bg:"#FFF7ED",bd:"#FED7AA",critical:dc<=1});
-      }
     });
+  });
+  // Cancelamento: alerta APENAS 1 dia antes ou no dia (todos os armadores, independente de ddlDays)
+  ships.forEach(s=>{
+    if(!s.dataCancelamento)return;
+    const dc=dUntil(s.dataCancelamento);
+    if(dc===null||dc<0||dc>1)return;
+    const id=`cancel-${s.id}`;
+    const lbl=dc===0?"HOJE":"AMANHÃ";
+    notes.push({id,msg:`⚠️ ${s.armador||""} — "${s.nome}": Cancelamento da reserva ${lbl}! (${fD(s.dataCancelamento)})`,color:aC(s.armador||""),bg:"#FFF7ED",bd:"#FED7AA",critical:true});
   });
   const visible=notes.filter(n=>!dismissed[n.id]);
   if(!visible.length&&notifPerm==="granted")return null;
@@ -485,16 +489,21 @@ function BookingsPanel({data,setData,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[sel,setSel]=useState(null);const[filter,setFilter]=useState("Todos");const[tick,setTick]=useState(0);
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),1000);return()=>clearInterval(i)},[]);
   // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 1h, trashed after 5 days
-  useEffect(()=>{
-    const shouldClean=A(data).some(r=>isExp(r)||isEnvExp(r)||isTrashExp(r));
-    if(shouldClean)setData(prev=>A(prev).filter(r=>!isExp(r)&&!isEnvExp(r)&&!isTrashExp(r)));
-  },[data]);
+  // ⚠️ AUTO-PURGE DESTRUTIVO DESATIVADO (abril/2026)
+  // Antes: bookings "Aprovado" eram apagados depois de 3 dias e
+  // "Enviado ao cliente" depois de 1 hora — sem ir pra lixeira.
+  // Isso causava sumiço de dados horas após o lançamento.
+  // Agora: nada é apagado automaticamente. A limpeza é manual via lixeira.
+  // useEffect(()=>{
+  //   const shouldClean=A(data).some(r=>isExp(r)||isEnvExp(r)||isTrashExp(r));
+  //   if(shouldClean)setData(prev=>A(prev).filter(r=>!isExp(r)&&!isEnvExp(r)&&!isTrashExp(r)));
+  // },[data]);
   const active=A(data).filter(r=>!isTrashed(r));
   const activeNoEnv=active.filter(r=>r.status!=="Enviado ao cliente");
   const escC=activeNoEnv.filter(isEsc).length,urgC=activeNoEnv.filter(isUrg).length;
   const envCount=active.filter(r=>r.status==="Enviado ao cliente").length;
   const filt=filter==="Todos"?activeNoEnv:filter==="Escalonados"?activeNoEnv.filter(isEsc):filter==="Urgentes"?activeNoEnv.filter(isUrg):filter==="Enviado ao cliente"?active.filter(r=>r.status==="Enviado ao cliente"):active.filter(r=>r.status===filter);
-  const addReq=f=>{setData(prev=>[{id:`BK-${String(prev.length+1).padStart(3,"0")}`,status:"Solicitado",createdAt:Date.now(),updatedAt:Date.now(),createdBy:user.name,history:[],observations:[],...f},...prev]);setShowNew(false)};
+  const addReq=f=>{const uid=`BK-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2,5).toUpperCase()}`;setData(prev=>[{id:uid,status:"Solicitado",createdAt:Date.now(),updatedAt:Date.now(),createdBy:user.name,history:[],observations:[],...f},...prev]);setShowNew(false)};
   const chgSt=(id,s)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,status:s,updatedAt:Date.now(),history:[...r.history,{from:r.status,to:s,at:Date.now(),by:user.name}]}:r));setSel(null)};
   const updReq=(id,fields)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,...fields,updatedAt:Date.now()}:r));setSel(prev=>prev?{...prev,...fields}:prev)};
   const delReq=id=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:Date.now(),deletedBy:user.name}:r));setSel(null)};
@@ -994,16 +1003,20 @@ export default function App(){
               }
             }
           });
-          // Also check ship cancellation date
-          if(s.dataCancelamento){
-            const dc=dUntil(s.dataCancelamento);
-            if(dc!==null&&dc>=0&&dc<=arm.ddlDays){
-              const key=`cancel-${s.id}-${dc}`;
-              if(!notifiedRef.current[key]){
-                alerts.push({title:`⚠️ Cancelamento em ${dc} dia(s)!`,body:`${arm.name} — "${s.nome}": Data de cancelamento ${fD(s.dataCancelamento)}`,key});
-              }
-            }
-          }
+        });
+      });
+      // Cancelamento de reserva: alerta APENAS 1 dia antes e no dia (todos os armadores, independente de ddlDays)
+      ships.forEach(s=>{
+        if(!s.dataCancelamento)return;
+        const dc=dUntil(s.dataCancelamento);
+        if(dc===null||dc<0||dc>1)return;
+        const key=`cancel-${s.id}-${dc}`;
+        if(notifiedRef.current[key])return;
+        const lbl=dc===0?"HOJE":"AMANHÃ";
+        alerts.push({
+          title:`⚠️ Cancelamento ${lbl}!`,
+          body:`${s.armador||""} — "${s.nome}": Data de cancelamento ${fD(s.dataCancelamento)}`,
+          key
         });
       });
       // SLA estourado
