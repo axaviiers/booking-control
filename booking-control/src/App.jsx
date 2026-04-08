@@ -38,7 +38,9 @@ const TABS=[
   {id:"lixeira",label:"Lixeira",icon:"🗑",c:"#64748B",bg:"#F8FAFC"},
 ];
 const AClr={"MSC":"#1D4ED8","Maersk":"#0F766E","CMA CGM":"#B45309","Hapag-Lloyd":"#DC2626","COSCO":"#7C3AED","Evergreen":"#047857","ONE":"#BE185D","HMM":"#0369A1","Yang Ming":"#A16207","ZIM":"#6D28D9"};
-const aC=a=>AClr[a]||"#475569";
+const APAL=["#1D4ED8","#0F766E","#B45309","#DC2626","#7C3AED","#047857","#BE185D","#0369A1","#A16207","#6D28D9","#9333EA","#0891B2","#CA8A04","#16A34A","#E11D48","#2563EB","#C2410C","#65A30D","#DB2777","#0D9488"];
+const aHash=s=>{let h=0;for(let i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))|0}return Math.abs(h)};
+const aC=a=>a?(AClr[a]||APAL[aHash(a)%APAL.length]):"#475569";
 const fT=ms=>{if(ms<=0)return"00:00:00";const h=Math.floor(ms/3600000),m=Math.floor((ms%3600000)/60000),s=Math.floor((ms%60000)/1000);return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`};
 const pD=ts=>{if(!ts)return null;const s=String(ts);if(s.includes("T"))return new Date(s);return new Date(s+"T12:00:00")};
 const fD=ts=>ts?pD(ts).toLocaleDateString("pt-BR"):"—";
@@ -773,7 +775,16 @@ function SolicitacoesPanel({data,setData,armadores,user}){
     Confirmado:active.filter(s=>s.status==="Confirmado").length,
     Cancelado:active.filter(s=>s.status==="Cancelado").length,
   };
-  const filtered=filter==="Todas"?active:active.filter(s=>(s.status||"Aberto")===filter);
+  const filtered=(filter==="Todas"?active:active.filter(s=>(s.status||"Aberto")===filter))
+    .slice()
+    .sort((a,b)=>{
+      const da=a.saida||a.dataDesejada||"";
+      const db=b.saida||b.dataDesejada||"";
+      if(!da&&!db)return(a.createdAt||0)-(b.createdAt||0);
+      if(!da)return 1; // sem data vai pro fim
+      if(!db)return -1;
+      return da.localeCompare(db); // YYYY-MM-DD ordena lexicograficamente
+    });
 
   const addSol=(f)=>{
     const uid=`SOL-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2,5).toUpperCase()}`;
@@ -830,13 +841,13 @@ function SolicitacoesPanel({data,setData,armadores,user}){
       {filtered.map(sol=>{
         const st=SOL_ST[sol.status||"Aberto"];
         const tents=A(sol.tentativas);
-        const isExp=!!expanded[sol.id];
+        const isExp=expanded[sol.id]!==false; // expandido por padrão
         const form=tf[sol.id]||{bookingNumber:"",equipQty:1,equipType:"",status:"Solicitado"};
         const navioLabel=sol.navio||sol.subject||"(sem navio)";
         const armadorLabel=sol.armador||"";
         return(<div key={sol.id} style={{background:"#fff",border:`1px solid ${st.bd}`,borderRadius:10,overflow:"hidden"}}>
           {/* Header da solicitação */}
-          <div style={{padding:"12px 14px",background:st.bg,borderBottom:isExp?`1px solid ${st.bd}`:"none",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,cursor:"pointer"}} onClick={()=>setExpanded(p=>({...p,[sol.id]:!p[sol.id]}))}>
+          <div style={{padding:"12px 14px",background:st.bg,borderBottom:isExp?`1px solid ${st.bd}`:"none",display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,cursor:"pointer"}} onClick={()=>setExpanded(p=>({...p,[sol.id]:!isExp}))}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
                 <span style={{padding:"2px 8px",borderRadius:12,fontSize:9,fontWeight:700,background:"#fff",color:st.c,border:`1px solid ${st.bd}`}}>{st.i} {sol.status||"Aberto"}</span>
