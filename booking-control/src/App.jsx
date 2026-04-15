@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups } from "./lib/db.js";
 
-const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000,ONE_HOUR=3600000;
+const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000,ONE_HOUR=3600000,TEN_HOURS=10*3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
 const RU_PORTS=["saint petersburg","st petersburg","st. petersburg","novorossiysk"];
 const isRuPort=r=>{try{const p=((r?.pol||"")+(r?.pod||"")).toLowerCase();return RU_PORTS.some(rp=>p.includes(rp))}catch{return false}};
@@ -49,7 +49,7 @@ const isEsc=r=>{try{return(r.status==="Solicitado"||r.status==="Precisando de es
 const isUrg=r=>!!r.isUrgent;
 const slaR=r=>{try{if(!r||r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente"||r.status==="Em processo de transferência")return null;return getSLA(r)-(Date.now()-(r.createdAt||0))}catch{return null}};
 const isExp=r=>r.status==="Aprovado"&&(Date.now()-r.updatedAt)>THREE_DAYS;
-const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>ONE_HOUR;
+const isEnvExp=r=>r.status==="Enviado ao cliente"&&(Date.now()-r.updatedAt)>TEN_HOURS;
 const isTrashed=r=>!!r.deletedAt;
 const isTrashExp=r=>r.deletedAt&&(Date.now()-r.deletedAt)>FIVE_DAYS;
 const A=v=>Array.isArray(v)?v:[];
@@ -561,12 +561,11 @@ function Notifications({bookings,ships,armadores,notifPerm,onRequestPerm}){
 function BookingsPanel({data,setData,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[sel,setSel]=useState(null);const[filter,setFilter]=useState("Todos");const[tick,setTick]=useState(0);
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),1000);return()=>clearInterval(i)},[]);
-  // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 1h, trashed after 5 days
-  // Auto-purge APENAS "Enviado ao cliente" após 1h (abril/2026).
-  // Aprovado e Lixeira não são mais apagados automaticamente.
+  // Auto-purge: "Enviado ao cliente" após 10h vai para a lixeira (soft-delete).
+  // Isso garante que a remoção sincronize entre os clientes via merge por updatedAt.
   useEffect(()=>{
-    const shouldClean=A(data).some(r=>isEnvExp(r));
-    if(shouldClean)setData(prev=>A(prev).filter(r=>!isEnvExp(r)));
+    const shouldClean=A(data).some(r=>isEnvExp(r)&&!isTrashed(r));
+    if(shouldClean){const now=Date.now();setData(prev=>A(prev).map(r=>(isEnvExp(r)&&!isTrashed(r))?{...r,deletedAt:now,deletedBy:"sistema (auto 10h)",updatedAt:now}:r))}
   },[data]);
   const active=A(data).filter(r=>!isTrashed(r));
   const activeNoEnv=active.filter(r=>r.status!=="Enviado ao cliente");
