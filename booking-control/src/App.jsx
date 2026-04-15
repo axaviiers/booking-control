@@ -576,7 +576,7 @@ function BookingsPanel({data,setData,armadores,user}){
   const addReq=f=>{const uid=`BK-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2,5).toUpperCase()}`;setData(prev=>[{id:uid,status:"Solicitado",createdAt:Date.now(),updatedAt:Date.now(),createdBy:user.name,history:[],observations:[],...f},...prev]);setShowNew(false)};
   const chgSt=(id,s)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,status:s,updatedAt:Date.now(),history:[...r.history,{from:r.status,to:s,at:Date.now(),by:user.name}]}:r));setSel(null)};
   const updReq=(id,fields)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,...fields,updatedAt:Date.now()}:r));setSel(prev=>prev?{...prev,...fields}:prev)};
-  const delReq=id=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:Date.now(),deletedBy:user.name}:r));setSel(null)};
+  const delReq=id=>{const now=Date.now();setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:now,deletedBy:user.name,updatedAt:now}:r));setSel(null)};
   return(<div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:16}}>
       {[{l:"Total",v:activeNoEnv.length,c:"#475569",bg:"#F8FAFC",bd:"#E2E8F0"},{l:"Solicitado",v:activeNoEnv.filter(r=>r.status==="Solicitado").length,c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A"},{l:"Urgentes",v:urgC,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"},{l:"Aprovado",v:activeNoEnv.filter(r=>r.status==="Aprovado").length,c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0"},{l:"Enviado ao cliente",v:envCount,c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD"},{l:"Cancelado",v:activeNoEnv.filter(r=>r.status==="Cancelado").length,c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA"},{l:"Escalonado",v:escC,c:escC?"#DC2626":"#94A3B8",bg:escC?"#FEF2F2":"#F8FAFC",bd:escC?"#FECACA":"#E2E8F0"}].map((s,i)=>
@@ -649,7 +649,7 @@ function PendenciasPanel({data,setData,user}){
   // Auto-purge resolved after 1 hour
   useEffect(()=>{
     const shouldClean=A(data).some(d=>d.resolved&&!d._deleted&&d.resolvedAt&&(Date.now()-d.resolvedAt)>ONE_HOUR);
-    if(shouldClean)setData(prev=>A(prev).map(x=>(x.resolved&&!x._deleted&&x.resolvedAt&&(Date.now()-x.resolvedAt)>ONE_HOUR)?{...x,_deleted:true}:x));
+    if(shouldClean){const now=Date.now();setData(prev=>A(prev).map(x=>(x.resolved&&!x._deleted&&x.resolvedAt&&(now-x.resolvedAt)>ONE_HOUR)?{...x,_deleted:true,updatedAt:now}:x))}
   },[data,tick]);
   const pending=A(data).filter(d=>!d.resolved&&!d._deleted);const resolved=A(data).filter(d=>d.resolved&&!d._deleted);
   const fmtRemaining=(resolvedAt)=>{if(!resolvedAt)return"";const left=Math.max(0,ONE_HOUR-(Date.now()-resolvedAt));const m=Math.ceil(left/60000);return m>0?`${m}min restante${m>1?"s":""}`:""};
@@ -664,17 +664,17 @@ function PendenciasPanel({data,setData,user}){
     {/* Notification for recently resolved */}
     {resolved.length>0&&<div style={{padding:"10px 14px",borderRadius:10,background:"#D1FAE5",border:"1px solid #A7F3D0",marginBottom:10,animation:"slideIn .4s"}}><p style={{color:"#047857",fontWeight:700,fontSize:12}}>✅ {resolved.length} pendência(s) resolvida(s) — serão removidas automaticamente em até 1h</p></div>}
     <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>
-      {pending.map(p=><div key={p.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:"#B45309"}}>{p.bookingNumber}</span></p><p style={{fontSize:12,color:"#64748B",marginTop:2}}>{p.observation}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{p.createdBy} · {fDt(p.createdAt)}</p>{A(p.comments).map((c,i)=><div key={i} style={{padding:"4px 8px",borderRadius:4,background:"#FFFBEB",marginTop:3}}><p style={{fontSize:11}}>{c.text}</p><p style={{fontSize:8,color:"#94A3B8"}}>{c.by} · {fDt(c.at)}</p></div>)}{selP===p.id&&<div style={{display:"flex",gap:4,marginTop:6}}><input value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="Comentário..." style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter"&&cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}]}:x));setCmt("")}}}/><button onClick={()=>{if(cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}]}:x));setCmt("")}}} style={{...bP,padding:"5px 10px",fontSize:10}}>+</button></div>}</div><div style={{display:"flex",gap:4,marginLeft:8}}><button onClick={()=>setSelP(selP===p.id?null:p.id)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>💬</button><button onClick={()=>setEditP(p)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:BRAND,fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>✏️</button><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:true,resolvedAt:Date.now(),resolvedBy:user.name}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✓</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div></div></div>)}
+      {pending.map(p=><div key={p.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:"#B45309"}}>{p.bookingNumber}</span></p><p style={{fontSize:12,color:"#64748B",marginTop:2}}>{p.observation}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{p.createdBy} · {fDt(p.createdAt)}</p>{A(p.comments).map((c,i)=><div key={i} style={{padding:"4px 8px",borderRadius:4,background:"#FFFBEB",marginTop:3}}><p style={{fontSize:11}}>{c.text}</p><p style={{fontSize:8,color:"#94A3B8"}}>{c.by} · {fDt(c.at)}</p></div>)}{selP===p.id&&<div style={{display:"flex",gap:4,marginTop:6}}><input value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="Comentário..." style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter"&&cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}],updatedAt:Date.now()}:x));setCmt("")}}}/><button onClick={()=>{if(cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}],updatedAt:Date.now()}:x));setCmt("")}}} style={{...bP,padding:"5px 10px",fontSize:10}}>+</button></div>}</div><div style={{display:"flex",gap:4,marginLeft:8}}><button onClick={()=>setSelP(selP===p.id?null:p.id)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>💬</button><button onClick={()=>setEditP(p)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:BRAND,fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>✏️</button><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:true,resolvedAt:Date.now(),resolvedBy:user.name,updatedAt:Date.now()}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✓</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true,updatedAt:Date.now()}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div></div></div>)}
       {!pending.length&&<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma pendência</div>}
     </div>
     {resolved.length>0&&<div style={{marginTop:12}}><p style={{...lS,marginBottom:6}}>Resolvidas (auto-exclusão em 1h)</p><div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>{resolved.map(p=>{const rem=fmtRemaining(p.resolvedAt);return(<div key={p.id} style={{padding:"10px 16px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",opacity:.7}}>
       <div><p style={{fontSize:12,fontWeight:600}}>✓ BKG: {p.bookingNumber}</p><p style={{fontSize:11,color:"#64748B"}}>{p.observation}</p>
         <p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>Resolvido por {p.resolvedBy||"—"} · {p.resolvedAt?fDt(p.resolvedAt):""}{rem?` · ⏱ ${rem}`:""}</p>
       </div>
-      <div style={{display:"flex",gap:4}}><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:false,resolvedAt:undefined,resolvedBy:undefined}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>↩️</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div>
+      <div style={{display:"flex",gap:4}}><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:false,resolvedAt:undefined,resolvedBy:undefined,updatedAt:Date.now()}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>↩️</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true,updatedAt:Date.now()}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div>
     </div>)})}</div></div>}
-    {showNew&&<PendenciaModal onClose={()=>setShowNew(false)} onSave={f=>{setData(prev=>[{id:`PD-${Date.now()}`,...f,resolved:false,createdBy:user.name,createdAt:Date.now(),comments:[]},...A(prev)]);setShowNew(false)}}/>}
-    {editP&&<PendenciaModal initial={editP} onClose={()=>setEditP(null)} onSave={f=>{setData(prev=>A(prev).map(x=>x.id===editP.id?{...x,...f}:x));setEditP(null)}}/>}
+    {showNew&&<PendenciaModal onClose={()=>setShowNew(false)} onSave={f=>{const now=Date.now();setData(prev=>[{id:`PD-${now}`,...f,resolved:false,createdBy:user.name,createdAt:now,updatedAt:now,comments:[]},...A(prev)]);setShowNew(false)}}/>}
+    {editP&&<PendenciaModal initial={editP} onClose={()=>setEditP(null)} onSave={f=>{const now=Date.now();setData(prev=>A(prev).map(x=>x.id===editP.id?{...x,...f,updatedAt:now}:x));setEditP(null)}}/>}
   </div>);
 }
 
@@ -682,9 +682,9 @@ function PendenciasPanel({data,setData,user}){
 // LIXEIRA (Trash — auto-purge after 5 days)
 // ═════════════════════════════════════════════
 function LixeiraPanel({data,setData}){
-  const trashed=A(data).filter(isTrashed);
-  const restore=id=>setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:undefined,deletedBy:undefined}:r));
-  const permDel=id=>{if(window.confirm("Apagar permanentemente? Não pode ser desfeito."))setData(prev=>A(prev).filter(r=>r.id!==id))};
+  const trashed=A(data).filter(r=>isTrashed(r)&&!r._purged);
+  const restore=id=>{const now=Date.now();setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:undefined,deletedBy:undefined,updatedAt:now}:r))};
+  const permDel=id=>{if(window.confirm("Apagar permanentemente? Não pode ser desfeito."))setData(prev=>A(prev).map(r=>r.id===id?{...r,_purged:true,updatedAt:Date.now()}:r))};
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <div style={{display:"flex",gap:12}}>
@@ -920,15 +920,15 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
   const[editBkg,setEditBkg]=useState(null);const[editBkgShip,setEditBkgShip]=useState(null);
   const addArmador=(newArm)=>{if(setArmadores)setArmadores(prev=>[...prev,newArm])};
   const arms=useMemo(()=>armadores.map(a=>a.name),[armadores]);
-  const armsWithShips=useMemo(()=>arms.filter(a=>ships.some(s=>s.armador===a)),[ships,arms]);
-  const armsEmpty=useMemo(()=>arms.filter(a=>!ships.some(s=>s.armador===a)),[ships,arms]);
+  const armsWithShips=useMemo(()=>arms.filter(a=>ships.some(s=>s.armador===a&&!s.deletedAt)),[ships,arms]);
+  const armsEmpty=useMemo(()=>arms.filter(a=>!ships.some(s=>s.armador===a&&!s.deletedAt)),[ships,arms]);
   const[selArm,setSelArm]=useState(()=>armsWithShips[0]||arms[0]||"");
   // Only auto-select if current armador was deleted from the list
   useEffect(()=>{if(selArm&&arms.length&&!arms.includes(selArm))setSelArm(arms[0])},[arms,selArm]);
   // If no arm selected yet, pick first with ships
   useEffect(()=>{if(!selArm&&armsWithShips.length)setSelArm(armsWithShips[0])},[armsWithShips,selArm]);
 
-  const armShips=useMemo(()=>ships.filter(s=>s.armador===selArm).map(s=>({...s,bookings:s.bookings||[]})).sort((a,b)=>{
+  const armShips=useMemo(()=>ships.filter(s=>s.armador===selArm&&!s.deletedAt).map(s=>({...s,bookings:(s.bookings||[]).filter(b=>!b.deletedAt)})).sort((a,b)=>{
     const da=a.previsaoSaida?pD(a.previsaoSaida).getTime():Infinity;
     const db=b.previsaoSaida?pD(b.previsaoSaida).getTime():Infinity;
     return da-db;
@@ -936,11 +936,12 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
   const armCfg=armadores.find(a=>a.name===selArm);
   const col=aC(selArm);
 
-  const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?"))setShips(prev=>A(prev).filter(s=>s.id!==id))};
-  const delBkg=(shipId,bkgId)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).filter(b=>b.id!==bkgId)}:s));
-  const updBkg=(shipId,updatedBkg)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).map(b=>b.id===updatedBkg.id?{...b,...updatedBkg}:b)}:s));
+  const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?")){const now=Date.now();setShips(prev=>A(prev).map(s=>s.id===id?{...s,deletedAt:now,deletedBy:user.name,updatedAt:now}:s))}};
+  const delBkg=(shipId,bkgId)=>{const now=Date.now();setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,updatedAt:now,bookings:(s.bookings||[]).map(b=>b.id===bkgId?{...b,deletedAt:now,updatedAt:now}:b)}:s))};
+  const updBkg=(shipId,updatedBkg)=>{const now=Date.now();setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,updatedAt:now,bookings:(s.bookings||[]).map(b=>b.id===updatedBkg.id?{...b,...updatedBkg,updatedAt:now}:b)}:s))};
 
-  const totNavios=ships.length;const totBkgs=ships.reduce((a,s)=>a+(s.bookings||[]).length,0);
+  const activeShips=useMemo(()=>ships.filter(s=>!s.deletedAt),[ships]);
+  const totNavios=activeShips.length;const totBkgs=activeShips.reduce((a,s)=>a+(s.bookings||[]).filter(b=>!b.deletedAt).length,0);
   const armBkgs=armShips.reduce((a,s)=>a+(s.bookings||[]).length,0);
 
   // Table header style
@@ -974,7 +975,7 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
 
     {/* Armador tabs — styled like spreadsheet tabs */}
     <div style={{display:"flex",gap:0,borderBottom:`3px solid ${col}`,marginBottom:0,overflowX:"auto",paddingBottom:0}}>
-      {arms.map(arm=>{const ac=aC(arm);const isActive=arm===selArm;const shipCount=ships.filter(s=>s.armador===arm).length;
+      {arms.map(arm=>{const ac=aC(arm);const isActive=arm===selArm;const shipCount=ships.filter(s=>s.armador===arm&&!s.deletedAt).length;
         return(<button key={arm} onClick={()=>setSelArm(arm)} style={{
           padding:"9px 18px",borderRadius:"8px 8px 0 0",border:isActive?`2px solid ${ac}`:"2px solid #E2E8F0",
           borderBottom:isActive?`3px solid ${ac}`:"2px solid transparent",
@@ -1068,9 +1069,9 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
     </div>
 
     {armsEmpty.length>0&&<p style={{color:"#CBD5E1",fontSize:10,textAlign:"center",marginTop:10}}>Sem navios: {armsEmpty.join(", ")}</p>}
-    {showNew&&<ShipModal onClose={()=>setShowNew(false)} onSave={f=>{setShips(prev=>[{id:`NV-${Date.now()}`,bookings:[],...f,createdBy:user.name,createdAt:Date.now()},...prev]);setShowNew(false)}} armadores={armadores} onAddArmador={addArmador}/>}
-    {editShip&&<ShipModal onClose={()=>setEditShip(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===editShip.id?{...s,...f}:s));setEditShip(null)}} armadores={armadores} initial={editShip} onAddArmador={addArmador}/>}
-    {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===addBkgTo.id?{...s,bookings:[...s.bookings,{id:`SBK-${Date.now()}`,createdAt:Date.now(),...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo} armadores={armadores}/>}
+    {showNew&&<ShipModal onClose={()=>setShowNew(false)} onSave={f=>{const now=Date.now();setShips(prev=>[{id:`NV-${now}`,bookings:[],...f,createdBy:user.name,createdAt:now,updatedAt:now},...prev]);setShowNew(false)}} armadores={armadores} onAddArmador={addArmador}/>}
+    {editShip&&<ShipModal onClose={()=>setEditShip(null)} onSave={f=>{const now=Date.now();setShips(prev=>A(prev).map(s=>s.id===editShip.id?{...s,...f,updatedAt:now}:s));setEditShip(null)}} armadores={armadores} initial={editShip} onAddArmador={addArmador}/>}
+    {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{const now=Date.now();setShips(prev=>A(prev).map(s=>s.id===addBkgTo.id?{...s,updatedAt:now,bookings:[...(s.bookings||[]),{id:`SBK-${now}`,createdAt:now,updatedAt:now,...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo} armadores={armadores}/>}
     {editBkg&&editBkgShip&&<EditShipBookingModal onClose={()=>{setEditBkg(null);setEditBkgShip(null)}} onSave={f=>{updBkg(editBkgShip.id,f);setEditBkg(null);setEditBkgShip(null)}} ship={editBkgShip} booking={editBkg} armadores={armadores}/>}
   </div>);
 }
@@ -1129,7 +1130,7 @@ export default function App(){
   const[saveStatus,setSaveStatus]=useState("idle"); // idle | saving | ok | error
   const[lastSavedAt,setLastSavedAt]=useState(null);
 
-  // Dedupe por id (mantém o mais recente por updatedAt)
+  // Dedupe por id (mantém o mais recente por updatedAt; em empate, mantém o primeiro)
   const dedupeById=(arr)=>{
     const m=new Map();
     (arr||[]).forEach(it=>{
@@ -1138,9 +1139,38 @@ export default function App(){
       if(!prev){m.set(it.id,it);return}
       const pu=prev.updatedAt||prev.createdAt||0;
       const nu=it.updatedAt||it.createdAt||0;
-      if(nu>=pu)m.set(it.id,it);
+      if(nu>pu)m.set(it.id,it);
     });
     return Array.from(m.values());
+  };
+
+  // Merge profundo de ships por id (mescla sub-bookings também por id+updatedAt)
+  const mergeShipsDeep=(localArr,newArr)=>{
+    const map=new Map();
+    const putShip=(s)=>{
+      if(!s||!s.id)return;
+      const prev=map.get(s.id);
+      if(!prev){map.set(s.id,{...s,bookings:s.bookings||[]});return}
+      const pu=prev.updatedAt||prev.createdAt||0;
+      const nu=s.updatedAt||s.createdAt||0;
+      const newer=nu>pu?s:prev;
+      const older=newer===s?prev:s;
+      // mescla sub-bookings por id+updatedAt, preservando tombstones
+      const bm=new Map();
+      ;(older.bookings||[]).forEach(b=>{if(b&&b.id)bm.set(b.id,b)});
+      ;(newer.bookings||[]).forEach(b=>{
+        if(!b||!b.id)return;
+        const p=bm.get(b.id);
+        if(!p){bm.set(b.id,b);return}
+        const ppu=p.updatedAt||p.createdAt||0;
+        const nnu=b.updatedAt||b.createdAt||0;
+        if(nnu>=ppu)bm.set(b.id,b);
+      });
+      map.set(s.id,{...newer,bookings:Array.from(bm.values())});
+    };
+    (localArr||[]).forEach(putShip);
+    (newArr||[]).forEach(putShip);
+    return Array.from(map.values());
   };
 
   // Merge: combina local + novo por id. Nunca substitui cegamente.
@@ -1153,7 +1183,7 @@ export default function App(){
     if(fromRemote)applyingRemoteRef.current=true;
     if(d.bookings)  setBookings(prev=>mergeArr(prev,d.bookings));
     if(d.pendencias)setPendencias(prev=>mergeArr(prev,d.pendencias));
-    if(d.ships)     setShips(prev=>mergeArr(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
+    if(d.ships)     setShips(prev=>mergeShipsDeep(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
     if(d.solicitacoes)setSolicitacoes(prev=>mergeArr(prev,d.solicitacoes));
     if(d.users){
       const merged=[...(d.users||[])];
@@ -1284,6 +1314,7 @@ export default function App(){
       // Cancelamento de reserva: calcula data a partir da regra do armador.
       // Alerta 2 dias antes, 1 dia antes e no dia.
       ships.forEach(s=>{
+        if(s.deletedAt)return;
         const armObj=armadores.find(a=>a.name===s.armador);
         const calc=computeCancelDate(s,armObj);
         if(!calc.date)return;
