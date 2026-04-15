@@ -8,24 +8,43 @@ export const supabase = (url && key) ? createClient(url, key) : null
 // ─────────────────────────────────────────────────────────────
 // MERGE HELPERS — evitar perda de dados em edições concorrentes
 // ─────────────────────────────────────────────────────────────
-// Regra: para cada coleção (bookings, pendencias, ships), combinamos
-// a versão remota com a local usando o `updatedAt` mais recente como
-// "vencedor". Itens que existem só em um lado são preservados.
-// Isso elimina o "last-write-wins" que estava apagando lançamentos.
+// Regras:
+// 1) Cada item é identificado por `id`.
+// 2) Em conflito, o `updatedAt` mais recente vence (fallback: createdAt).
+// 3) Itens com `deletedAt` (tombstone) continuam na coleção — é a única
+//    forma de a exclusão propagar entre clientes. A UI filtra ao exibir.
+// 4) Itens com `_purged:true` (apagados permanentemente) também são
+//    preservados como tombstones para não "ressuscitarem".
+// 5) Para navios (ships), mesclamos também o array interno `bookings`
+//    por id+updatedAt, para que edições simultâneas em sub-bookings de
+//    clientes diferentes não sobrescrevam umas às outras.
 
-function mergeCollection(remoteArr, localArr) {
+function ts(item) {
+  return (item && (item.updatedAt || item.createdAt)) || 0
+}
+
+function mergeCollection(remoteArr, localArr, itemMerger) {
   const map = new Map()
-  const add = (item) => {
+  const put = (item) => {
     if (!item || !item.id) return
     const prev = map.get(item.id)
     if (!prev) { map.set(item.id, item); return }
-    const pu = prev.updatedAt || prev.createdAt || 0
-    const nu = item.updatedAt || item.createdAt || 0
-    if (nu >= pu) map.set(item.id, item)
+    if (itemMerger) { map.set(item.id, itemMerger(prev, item)); return }
+    // Tie-break: mais recente vence; em empate, mantém o primeiro.
+    if (ts(item) > ts(prev)) map.set(item.id, item)
   }
-  ;(remoteArr || []).forEach(add)
-  ;(localArr  || []).forEach(add)
+  ;(remoteArr || []).forEach(put)
+  ;(localArr  || []).forEach(put)
   return Array.from(map.values())
+}
+
+// Merger específico para navios: escolhe o "esqueleto" do navio pelo
+// updatedAt mais recente, mas mescla os sub-bookings por id (nunca perde).
+function mergeShip(a, b) {
+  const newer = ts(b) >= ts(a) ? b : a
+  const older = newer === a ? b : a
+  const mergedBookings = mergeCollection(older.bookings || [], newer.bookings || [])
+  return { ...newer, bookings: mergedBookings }
 }
 
 export function mergeStates(remote, local) {
@@ -34,7 +53,7 @@ export function mergeStates(remote, local) {
   return {
     bookings:    mergeCollection(remote.bookings,    local.bookings),
     pendencias:  mergeCollection(remote.pendencias,  local.pendencias),
-    ships:       mergeCollection(remote.ships,       local.ships),
+    ships:       mergeCollection(remote.ships,       local.ships, mergeShip),
     solicitacoes:mergeCollection(remote.solicitacoes,local.solicitacoes),
     users:      (local.users     && local.users.length)     ? local.users     : remote.users,
     armadores:  (local.armadores && local.armadores.length) ? local.armadores : remote.armadores,
@@ -72,7 +91,6 @@ export async function saveState(state, userName) {
       const remoteData    = cur?.data    || null
       const remoteVersion = cur?.version || 0
 
-      // Mescla remote + local: o mais recente por updatedAt vence
       const merged = mergeStates(remoteData, state)
 
       const payload = {
