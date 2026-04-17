@@ -1,3 +1,4 @@
+import PropostaMultiDestino from "./PropostaMultiDestino";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups } from "./lib/db.js";
 
