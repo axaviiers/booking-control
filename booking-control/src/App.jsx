@@ -1,5 +1,5 @@
-import PropostaMultiDestino from "./PropostaMultiDestino";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import PropostaMultiDestino from "./PropostaMultiDestino";
 import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups } from "./lib/db.js";
 
 const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000,ONE_HOUR=3600000,TEN_HOURS=10*3600000;
@@ -37,6 +37,7 @@ const TABS=[
   {id:"pendencias",label:"Pendências",icon:"⚠️",c:"#B45309",bg:"#FFF7ED"},
   {id:"standby",label:"Stand-by",icon:"🚢",c:"#0F766E",bg:"#F0FDFA"},
   {id:"lixeira",label:"Lixeira",icon:"🗑",c:"#64748B",bg:"#F8FAFC"},
+  {id:"propostas",label:"Propostas",icon:"📋",c:"#7C3AED",bg:"#F3E8FF"},
 ];
 const AClr={"MSC":"#1D4ED8","Maersk":"#0F766E","CMA CGM":"#B45309","Hapag-Lloyd":"#DC2626","COSCO":"#7C3AED","Evergreen":"#047857","ONE":"#BE185D","HMM":"#0369A1","Yang Ming":"#A16207","ZIM":"#6D28D9"};
 const APAL=["#1D4ED8","#0F766E","#B45309","#DC2626","#7C3AED","#047857","#BE185D","#0369A1","#A16207","#6D28D9","#9333EA","#0891B2","#CA8A04","#16A34A","#E11D48","#2563EB","#C2410C","#65A30D","#DB2777","#0D9488"];
@@ -1404,6 +1405,7 @@ export default function App(){
         {tab==="pendencias"&&<PendenciasPanel data={pendencias} setData={setPendencias} user={user}/>}
         {tab==="standby"&&<StandbyPanel ships={ships} setShips={setShips} solicitacoes={solicitacoes} setSolicitacoes={setSolicitacoes} armadores={armadores} setArmadores={setArmadores} user={user}/>}
         {tab==="lixeira"&&<LixeiraPanel data={bookings} setData={setBookings}/>}
+        {tab==="propostas"&&<PropostaMultiDestino/>}
       </div>
       {showUsers&&<UserManager users={users} onSave={l=>{setUsers(l);setShowUsers(false)}} onClose={()=>setShowUsers(false)}/>}
       {showArm&&<ArmadorManager armadores={armadores} onSave={l=>{setArmadores(l);setShowArm(false)}} onClose={()=>setShowArm(false)}/>}
