@@ -8,19 +8,13 @@ export const supabase = (url && key) ? createClient(url, key) : null
 // ─────────────────────────────────────────────────────────────
 // MERGE HELPERS — evitar perda de dados em edições concorrentes
 // ─────────────────────────────────────────────────────────────
-// Regras:
-// 1) Cada item é identificado por `id`.
-// 2) Em conflito, o `updatedAt` mais recente vence (fallback: createdAt).
-// 3) Itens com `deletedAt` (tombstone) continuam na coleção — é a única
-//    forma de a exclusão propagar entre clientes. A UI filtra ao exibir.
-// 4) Itens com `_purged:true` (apagados permanentemente) também são
-//    preservados como tombstones para não "ressuscitarem".
-// 5) Para navios (ships), mesclamos também o array interno `bookings`
-//    por id+updatedAt, para que edições simultâneas em sub-bookings de
-//    clientes diferentes não sobrescrevam umas às outras.
 
 function ts(item) {
   return (item && (item.updatedAt || item.createdAt)) || 0
+}
+
+function isDel(item) {
+  return !!(item && (item._purged || item.deletedAt || item._deleted))
 }
 
 function mergeCollection(remoteArr, localArr, itemMerger) {
@@ -30,13 +24,10 @@ function mergeCollection(remoteArr, localArr, itemMerger) {
     const prev = map.get(item.id)
     if (!prev) { map.set(item.id, item); return }
     if (itemMerger) { map.set(item.id, itemMerger(prev, item)); return }
-    // Regra anti-ressurreição: se qualquer versão tem _purged ou deletedAt,
-    // a versão deletada SEMPRE vence (evita que outro cliente "ressuscite" dados).
-    const itemDel = !!(item._purged || item.deletedAt)
-    const prevDel = !!(prev._purged || prev.deletedAt)
-    if (itemDel && !prevDel) { map.set(item.id, item); return }
-    if (prevDel && !itemDel) return // mantém o deletado
-    // Tie-break: mais recente vence; em empate, mantém o primeiro.
+    // Anti-ressurreição: versão deletada SEMPRE vence
+    if (isDel(item) && !isDel(prev)) { map.set(item.id, item); return }
+    if (isDel(prev) && !isDel(item)) return
+    // Tie-break: mais recente vence
     if (ts(item) > ts(prev)) map.set(item.id, item)
   }
   ;(remoteArr || []).forEach(put)
@@ -44,9 +35,9 @@ function mergeCollection(remoteArr, localArr, itemMerger) {
   return Array.from(map.values())
 }
 
-// Merger específico para navios: escolhe o "esqueleto" do navio pelo
-// updatedAt mais recente, mas mescla os sub-bookings por id (nunca perde).
 function mergeShip(a, b) {
+  if (isDel(a) && !isDel(b)) return a
+  if (isDel(b) && !isDel(a)) return b
   const newer = ts(b) >= ts(a) ? b : a
   const older = newer === a ? b : a
   const mergedBookings = mergeCollection(older.bookings || [], newer.bookings || [])
@@ -60,7 +51,7 @@ export function mergeStates(remote, local) {
     bookings:    mergeCollection(remote.bookings,    local.bookings),
     pendencias:  mergeCollection(remote.pendencias,  local.pendencias),
     ships:       mergeCollection(remote.ships,       local.ships, mergeShip),
-    solicitacoes:mergeCollection(remote.solicitacoes,local.solicitacoes),
+    solicitacoes:mergeCollection(remote.solicitacoes, local.solicitacoes),
     users:      (local.users     && local.users.length)     ? local.users     : remote.users,
     armadores:  (local.armadores && local.armadores.length) ? local.armadores : remote.armadores,
     logo:       local.logo !== undefined ? local.logo : remote.logo,
@@ -70,20 +61,42 @@ export function mergeStates(remote, local) {
 // ─── LOAD shared state ───
 export async function loadState() {
   if (!supabase) return null
-  const { data, error } = await supabase
-    .from('shared_state')
-    .select('data, version')
-    .eq('id', 1)
-    .maybeSingle()
-  if (error || !data) return null
-  return { ...(data.data || {}), __version: data.version || 0 }
+  try {
+    const { data, error } = await supabase
+      .from('shared_state')
+      .select('data, version')
+      .eq('id', 1)
+      .maybeSingle()
+    if (error || !data) return null
+    return { ...(data.data || {}), __version: data.version || 0 }
+  } catch (e) {
+    console.warn('[loadState] exception:', e?.message || e)
+    return null
+  }
 }
 
-// ─── SAVE — read-modify-write com merge e retry ───
+// ─── LOAD localStorage (rede de segurança) ───
+export function loadLocalState() {
+  try {
+    const raw = localStorage.getItem('booking-control-data')
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+
+// ─── SAVE LOCAL imediato ───
+export function saveLocalState(state) {
+  try {
+    localStorage.setItem('booking-control-data', JSON.stringify(state))
+  } catch (e) {
+    console.warn('[saveLocalState] failed:', e?.message || e)
+  }
+}
+
+// ─── SAVE — read-modify-write com LOCKING OTIMISTA e retry ───
 export async function saveState(state, userName) {
   if (!supabase) return { ok: false, reason: 'no-supabase' }
 
-  const MAX_RETRIES = 3
+  const MAX_RETRIES = 5
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const { data: cur, error: readErr } = await supabase
@@ -92,37 +105,65 @@ export async function saveState(state, userName) {
         .eq('id', 1)
         .maybeSingle()
 
-      if (readErr) console.warn('[saveState] read error:', readErr.message)
-
-      const remoteData    = cur?.data    || null
-      const remoteVersion = cur?.version || 0
-
-      const merged = mergeStates(remoteData, state)
-
-      const payload = {
-        id: 1,
-        data: merged,
-        version: remoteVersion + 1,
-        updated_at: new Date().toISOString(),
-        updated_by: userName || 'system'
-      }
-
-      const { error: writeErr } = await supabase
-        .from('shared_state')
-        .upsert(payload, { onConflict: 'id' })
-
-      if (writeErr) {
-        console.warn(`[saveState] write error (try ${attempt + 1}):`, writeErr.message)
-        if (attempt === MAX_RETRIES - 1) return { ok: false, reason: writeErr.message }
-        await new Promise(r => setTimeout(r, 200 * (attempt + 1)))
+      if (readErr) {
+        console.warn('[saveState] read error:', readErr.message)
+        await new Promise(r => setTimeout(r, 300 * (attempt + 1)))
         continue
       }
 
-      return { ok: true, version: remoteVersion + 1, data: merged }
+      const remoteData    = cur?.data    || null
+      const remoteVersion = cur?.version || 0
+      const merged = mergeStates(remoteData, state)
+      const newVersion = remoteVersion + 1
+
+      if (remoteVersion > 0) {
+        // UPDATE com locking otimista: WHERE version = versão lida
+        const { data: result, error: writeErr } = await supabase
+          .from('shared_state')
+          .update({
+            data: merged,
+            version: newVersion,
+            updated_at: new Date().toISOString(),
+            updated_by: userName || 'system'
+          })
+          .eq('id', 1)
+          .eq('version', remoteVersion)
+          .select('version')
+
+        if (writeErr) {
+          console.warn(`[saveState] write error (try ${attempt + 1}):`, writeErr.message)
+          await new Promise(r => setTimeout(r, 300 * (attempt + 1)))
+          continue
+        }
+
+        if (!result || result.length === 0) {
+          console.log(`[saveState] version conflict (try ${attempt + 1}), re-reading...`)
+          await new Promise(r => setTimeout(r, 150 * (attempt + 1)))
+          continue
+        }
+      } else {
+        const { error: writeErr } = await supabase
+          .from('shared_state')
+          .upsert({
+            id: 1,
+            data: merged,
+            version: newVersion,
+            updated_at: new Date().toISOString(),
+            updated_by: userName || 'system'
+          }, { onConflict: 'id' })
+
+        if (writeErr) {
+          console.warn(`[saveState] upsert error (try ${attempt + 1}):`, writeErr.message)
+          await new Promise(r => setTimeout(r, 300 * (attempt + 1)))
+          continue
+        }
+      }
+
+      return { ok: true, version: newVersion, data: merged }
     } catch (e) {
       console.warn(`[saveState] exception (try ${attempt + 1}):`, e?.message || e)
       if (attempt === MAX_RETRIES - 1) return { ok: false, reason: String(e?.message || e) }
-      await new Promise(r => setTimeout(r, 200 * (attempt + 1)))
+      await new Promise(r => setTimeout(r, 300 * (attempt + 1)))
     }
   }
   return { ok: false, reason: 'max-retries' }
@@ -133,7 +174,7 @@ export function subscribeToChanges(callback) {
   if (!supabase) return () => {}
   const channel = supabase
     .channel('shared-state-changes')
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, (payload) => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'shared_state' }, (payload) => {
       if (payload.new?.data) callback(payload.new.data, payload.new.version)
     })
     .subscribe()
@@ -141,7 +182,7 @@ export function subscribeToChanges(callback) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// BACKUPS LOCAIS ROTATIVOS — rede de segurança contra perda
+// BACKUPS LOCAIS ROTATIVOS
 // ─────────────────────────────────────────────────────────────
 const BACKUP_KEY = 'booking-control-backups'
 const MAX_BACKUPS = 10
