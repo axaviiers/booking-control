@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups } from "./lib/db.js";
+import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups, loadLocalState, saveLocalState } from "./lib/db.js";
 
 const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000,ONE_HOUR=3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
@@ -1125,13 +1125,17 @@ export default function App(){
   const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);const[showBackups,setShowBackups]=useState(false);
   const[refreshing,setRefreshing]=useState(false);const[online,setOnline]=useState(!!supabase);
 
-  // Contador: incrementa a cada apply remoto, o save-useEffect captura
-  // o valor ANTES de rodar e compara DEPOIS — se mudou, pula o save.
-  // Isso elimina a race-condition do setTimeout de 80ms.
-  const remoteVersionRef=useRef(0);
-  const savingRef=useRef(false); // evita saves concorrentes
   const[saveStatus,setSaveStatus]=useState("idle"); // idle | saving | ok | error
   const[lastSavedAt,setLastSavedAt]=useState(null);
+
+  // ── Versão do último save BEM-SUCEDIDO que NÓS fizemos ──
+  // Usada para suprimir ecos do realtime (quando recebemos de volta
+  // a mesma versão que acabamos de gravar, ignoramos).
+  const lastSavedVersionRef=useRef(0);
+  // Flag: true enquanto um save remoto está em andamento
+  const savingRef=useRef(false);
+  // Flag: true quando há mudanças locais NÃO salvas no server
+  const dirtyRef=useRef(false);
 
   // Dedupe por id (mantém o mais recente por updatedAt)
   const dedupeById=(arr)=>{
@@ -1153,8 +1157,8 @@ export default function App(){
     return dedupeById([...(localArr||[]),...(newArr||[])]);
   };
 
-  const applyState=useCallback((d,fromRemote=false)=>{
-    if(fromRemote)remoteVersionRef.current++;
+  // Aplica um estado recebido (remoto ou restauração) fazendo MERGE com o local
+  const applyState=useCallback((d)=>{
     if(d.bookings)  setBookings(prev=>mergeArr(prev,d.bookings));
     if(d.pendencias)setPendencias(prev=>mergeArr(prev,d.pendencias));
     if(d.ships)     setShips(prev=>mergeArr(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
@@ -1168,116 +1172,172 @@ export default function App(){
     if(d.logo!==undefined)setLogo(d.logo);
   },[]);
 
-  // LOAD inicial (usa substituição, não merge — é o primeiro estado)
+  // ═══════════════════════════════════════════════════════════
+  // LOAD INICIAL — SEMPRE faz merge Supabase + localStorage
+  // Isso garante que dados salvos localmente (mas não enviados
+  // ao server, ex: por refresh rápido) nunca sejam perdidos.
+  // ═══════════════════════════════════════════════════════════
   useEffect(()=>{(async()=>{
+    // Sempre lê localStorage como rede de segurança
+    const localData=loadLocalState();
+
     if(supabase){
-      const d=await loadState();
-      if(d&&Object.keys(d).length>0){
-        remoteVersionRef.current++;
-        if(d.bookings)  setBookings(dedupeById(d.bookings));
-        if(d.pendencias)setPendencias(dedupeById(d.pendencias));
-        if(d.ships)     setShips(dedupeById(d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
-        if(d.solicitacoes)setSolicitacoes(dedupeById(d.solicitacoes));
-        const u=[...(d.users||[])];
+      const remoteData=await loadState();
+      if(remoteData) lastSavedVersionRef.current=remoteData.__version||0;
+
+      // MERGE: Supabase (fonte principal) + localStorage (rede de segurança)
+      const merged=mergeStates(remoteData,localData);
+      if(merged&&Object.keys(merged).length>0){
+        if(merged.bookings)  setBookings(dedupeById(merged.bookings));
+        if(merged.pendencias)setPendencias(dedupeById(merged.pendencias));
+        if(merged.ships)     setShips(dedupeById((merged.ships||[]).map(s=>({...s,bookings:s.bookings||[]}))));
+        if(merged.solicitacoes)setSolicitacoes(dedupeById(merged.solicitacoes));
+        const u=[...(merged.users||[])];
         USR_DEF.forEach(def=>{if(!u.find(x=>x.username===def.username))u.push(def)});
         if(u.length)setUsers(u);
-        if(d.armadores?.length)setArmadores(d.armadores);
-        if(d.logo!==undefined)setLogo(d.logo);
+        if(merged.armadores?.length)setArmadores(merged.armadores);
+        if(merged.logo!==undefined)setLogo(merged.logo);
       }
       setOnline(true);
-    }else{
-      try{
-        const raw=localStorage.getItem("booking-control-data");
-        if(raw){
-          const d=JSON.parse(raw);
-          remoteVersionRef.current++;
-          if(d.bookings)setBookings(dedupeById(d.bookings));
-          if(d.pendencias)setPendencias(dedupeById(d.pendencias));
-          if(d.ships)setShips(dedupeById(d.ships));
-          if(d.solicitacoes)setSolicitacoes(dedupeById(d.solicitacoes));
-          if(d.users?.length)setUsers(d.users);
-          if(d.armadores?.length)setArmadores(d.armadores);
-          if(d.logo!==undefined)setLogo(d.logo);
+
+      // Se o localStorage tinha dados que o Supabase não tinha,
+      // marca como dirty para forçar um save assim que o user logar
+      if(localData&&remoteData){
+        const localBkCount=(localData.bookings||[]).length;
+        const remoteBkCount=(remoteData.bookings||[]).length;
+        const localShCount=(localData.ships||[]).length;
+        const remoteShCount=(remoteData.ships||[]).length;
+        if(localBkCount>remoteBkCount||localShCount>remoteShCount){
+          dirtyRef.current=true;
         }
-      }catch{}
+      }
+    }else{
+      // Sem Supabase → usa só localStorage
+      if(localData){
+        if(localData.bookings)setBookings(dedupeById(localData.bookings));
+        if(localData.pendencias)setPendencias(dedupeById(localData.pendencias));
+        if(localData.ships)setShips(dedupeById(localData.ships));
+        if(localData.solicitacoes)setSolicitacoes(dedupeById(localData.solicitacoes));
+        if(localData.users?.length)setUsers(localData.users);
+        if(localData.armadores?.length)setArmadores(localData.armadores);
+        if(localData.logo!==undefined)setLogo(localData.logo);
+      }
     }
     setLoaded(true);
   })()},[]);
 
   const saveRef=useRef(null);
   const backupRef=useRef(0);
+  // Guarda o "hash" do último estado que disparou um save,
+  // para não re-salvar estados idênticos (eco de realtime).
+  const lastSavedHashRef=useRef("");
 
-  // SAVE on change — pula se o estado veio do remoto (evita eco).
-  // Usa contador: captura o valor ANTES, compara DEPOIS do debounce.
-  // Se mudou, significa que um apply remoto aconteceu — NÃO salva.
+  // Gera um hash simples para detectar se o estado realmente mudou
+  const stateHash=(s)=>{
+    try{
+      const counts=[
+        (s.bookings||[]).length,
+        (s.pendencias||[]).length,
+        (s.ships||[]).length,
+        (s.solicitacoes||[]).length,
+      ].join(",");
+      // Inclui o updatedAt mais recente de cada coleção
+      const latest=[s.bookings,s.pendencias,s.ships,s.solicitacoes]
+        .map(arr=>(arr||[]).reduce((mx,it)=>Math.max(mx,it?.updatedAt||it?.createdAt||0),0))
+        .join(",");
+      return counts+"|"+latest;
+    }catch{return Date.now().toString()}
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  // SAVE — dispara quando qualquer dado muda.
+  // Estratégia anti-eco:
+  //   1. Calcula um "hash" do estado (contagem + timestamps)
+  //   2. Se o hash é igual ao último save, pula (nada mudou de fato)
+  //   3. Após save bem-sucedido, NÃO aplica resposta de volta
+  //      (o estado local JÁ tem tudo; o realtime cuida de trazer
+  //      dados de OUTROS clientes)
+  // ═══════════════════════════════════════════════════════════
   useEffect(()=>{
     if(!loaded)return;
-    // Captura o "snapshot" do contador remoto NESTE momento
-    const versionSnapshot=remoteVersionRef.current;
     const cleanBookings=dedupeById(bookings);
     const cleanPendencias=dedupeById(pendencias);
     const cleanShips=dedupeById(ships);
     const cleanSolicitacoes=dedupeById(solicitacoes);
     const state={bookings:cleanBookings,pendencias:cleanPendencias,ships:cleanShips,solicitacoes:cleanSolicitacoes,users,armadores,logo};
-    // Salvamento local imediato (não-bloqueante)
-    try{localStorage.setItem("booking-control-data",JSON.stringify(state))}catch(e){console.warn("localStorage save failed",e)}
-    // Backup rotativo a cada 2 minutos de atividade
+
+    // Salvamento local IMEDIATO (nunca perde dados mesmo se fechar o browser)
+    saveLocalState(state);
+
+    // Backup rotativo a cada 2 min de atividade
     if(Date.now()-backupRef.current>120000){
       backupRef.current=Date.now();
       pushLocalBackup(state);
     }
+
+    // Verifica se o estado realmente mudou (evita eco de realtime)
+    const hash=stateHash(state);
+    if(hash===lastSavedHashRef.current&&!dirtyRef.current)return;
+
     // Salvamento remoto com debounce
     if(supabase&&user){
       setSaveStatus("saving");
       if(saveRef.current)clearTimeout(saveRef.current);
       saveRef.current=setTimeout(async()=>{
-        // Se o contador mudou desde que agendamos, um apply remoto ocorreu — pula
-        if(remoteVersionRef.current!==versionSnapshot){
-          setSaveStatus("ok");
-          return;
-        }
-        // Evita saves concorrentes (espera o anterior terminar)
-        if(savingRef.current){
-          // Re-agenda: ao terminar o save atual, este estado será re-triggerado
-          setSaveStatus("saving");
-          return;
-        }
+        if(savingRef.current)return; // save anterior ainda rodando
         savingRef.current=true;
         try{
           const res=await saveState(state,user.name);
           if(res&&res.ok){
             setSaveStatus("ok");
             setLastSavedAt(Date.now());
-            // Se o merge no servidor trouxe dados de outros usuários, aplica MERGE (não replace)
-            if(res.data){
-              remoteVersionRef.current++;
-              if(res.data.bookings)    setBookings(prev=>mergeArr(prev,res.data.bookings));
-              if(res.data.pendencias)  setPendencias(prev=>mergeArr(prev,res.data.pendencias));
-              if(res.data.ships)       setShips(prev=>mergeArr(prev,res.data.ships));
-              if(res.data.solicitacoes)setSolicitacoes(prev=>mergeArr(prev,res.data.solicitacoes));
-            }
+            lastSavedVersionRef.current=res.version;
+            lastSavedHashRef.current=stateHash(state);
+            dirtyRef.current=false;
           }else{
             setSaveStatus("error");
+            dirtyRef.current=true; // marca como dirty para tentar de novo
             console.warn("Supabase save failed:",res?.reason);
           }
         }catch(e){
           setSaveStatus("error");
+          dirtyRef.current=true;
           console.warn("Save error",e);
         }finally{
           savingRef.current=false;
         }
-      },800);
+      },600);
     }
   },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded]);
 
-  // REALTIME — sempre aplica (merge cuida da consistência, sem janela de 4s)
+  // ═══════════════════════════════════════════════════════════
+  // REALTIME — recebe atualizações de outros clientes.
+  // Suprime ecos: se a versão recebida é a mesma que NÓS acabamos
+  // de gravar, ignora (já temos esses dados).
+  // ═══════════════════════════════════════════════════════════
   useEffect(()=>{
     if(!supabase)return;
-    const unsub=subscribeToChanges((newData)=>{
-      try{applyState(newData,true)}catch(e){console.warn("Apply state error",e)}
+    const unsub=subscribeToChanges((newData,version)=>{
+      try{
+        // Se a versão é <= a última que nós salvamos, é eco nosso → ignora
+        if(version&&version<=lastSavedVersionRef.current)return;
+        applyState(newData);
+      }catch(e){console.warn("Apply state error",e)}
     });
     return unsub;
   },[applyState]);
+
+  // Alerta ao sair com dados não salvos
+  useEffect(()=>{
+    const handler=(e)=>{
+      if(dirtyRef.current){
+        e.preventDefault();
+        e.returnValue="Existem dados não salvos. Deseja sair?";
+      }
+    };
+    window.addEventListener("beforeunload",handler);
+    return()=>window.removeEventListener("beforeunload",handler);
+  },[]);
 
   // ─── PUSH NOTIFICATIONS SYSTEM ───
   const notifiedRef=useRef({});const[notifPerm,setNotifPerm]=useState("default");
@@ -1397,7 +1457,7 @@ export default function App(){
         if(!window.confirm("Restaurar este backup? O estado atual será substituído (uma cópia de segurança do estado atual é feita automaticamente)."))return;
         // Salva snapshot do estado atual antes de restaurar
         pushLocalBackup({bookings,pendencias,ships,solicitacoes,users,armadores,logo});
-        remoteVersionRef.current++;
+        dirtyRef.current=true; // força save ao server
         if(s.bookings)setBookings(dedupeById(s.bookings));
         if(s.pendencias)setPendencias(dedupeById(s.pendencias));
         if(s.ships)setShips(dedupeById(s.ships));
