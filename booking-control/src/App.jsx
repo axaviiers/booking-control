@@ -564,11 +564,12 @@ function BookingsPanel({data,setData,armadores,user}){
   // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 1h, trashed after 5 days
   // Auto-purge APENAS "Enviado ao cliente" após 1h (abril/2026).
   // Aprovado e Lixeira não são mais apagados automaticamente.
+  // CORREÇÃO: usa soft-delete (_purged) em vez de .filter() para não perder dados.
   useEffect(()=>{
-    const shouldClean=A(data).some(r=>isEnvExp(r));
-    if(shouldClean)setData(prev=>A(prev).filter(r=>!isEnvExp(r)));
+    const shouldClean=A(data).some(r=>isEnvExp(r)&&!r._purged);
+    if(shouldClean)setData(prev=>A(prev).map(r=>isEnvExp(r)&&!r._purged?{...r,_purged:true,deletedAt:Date.now(),updatedAt:Date.now()}:r));
   },[data]);
-  const active=A(data).filter(r=>!isTrashed(r));
+  const active=A(data).filter(r=>!isTrashed(r)&&!r._purged);
   const activeNoEnv=active.filter(r=>r.status!=="Enviado ao cliente");
   const escC=activeNoEnv.filter(isEsc).length,urgC=activeNoEnv.filter(isUrg).length;
   const envCount=active.filter(r=>r.status==="Enviado ao cliente").length;
@@ -682,9 +683,9 @@ function PendenciasPanel({data,setData,user}){
 // LIXEIRA (Trash — auto-purge after 5 days)
 // ═════════════════════════════════════════════
 function LixeiraPanel({data,setData}){
-  const trashed=A(data).filter(isTrashed);
+  const trashed=A(data).filter(r=>isTrashed(r)&&!r._purged);
   const restore=id=>setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:undefined,deletedBy:undefined}:r));
-  const permDel=id=>{if(window.confirm("Apagar permanentemente? Não pode ser desfeito."))setData(prev=>A(prev).filter(r=>r.id!==id))};
+  const permDel=id=>{if(window.confirm("Apagar permanentemente? Não pode ser desfeito."))setData(prev=>A(prev).map(r=>r.id===id?{...r,_purged:true,updatedAt:Date.now()}:r))};
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
       <div style={{display:"flex",gap:12}}>
@@ -821,7 +822,7 @@ function SolicitacoesPanel({data,setData,armadores,user}){
   };
   const delTent=(solId,tentId)=>{
     if(!window.confirm("Remover esta tentativa?"))return;
-    setData(prev=>A(prev).map(s=>s.id===solId?{...s,tentativas:A(s.tentativas).filter(t=>t.id!==tentId),updatedAt:Date.now()}:s));
+    setData(prev=>A(prev).map(s=>s.id===solId?{...s,tentativas:A(s.tentativas).map(t=>t.id===tentId?{...t,_purged:true,updatedAt:Date.now()}:t),updatedAt:Date.now()}:s));
   };
 
   return(<div>
@@ -841,7 +842,7 @@ function SolicitacoesPanel({data,setData,armadores,user}){
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
       {filtered.map(sol=>{
         const st=SOL_ST[sol.status||"Aberto"];
-        const tents=A(sol.tentativas);
+        const tents=A(sol.tentativas).filter(t=>!t._purged);
         const isExp=expanded[sol.id]!==false; // expandido por padrão
         const form=tf[sol.id]||{bookingNumber:"",equipQty:1,equipType:"",status:"Solicitado"};
         const navioLabel=sol.navio||sol.subject||"(sem navio)";
@@ -920,15 +921,16 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
   const[editBkg,setEditBkg]=useState(null);const[editBkgShip,setEditBkgShip]=useState(null);
   const addArmador=(newArm)=>{if(setArmadores)setArmadores(prev=>[...prev,newArm])};
   const arms=useMemo(()=>armadores.map(a=>a.name),[armadores]);
-  const armsWithShips=useMemo(()=>arms.filter(a=>ships.some(s=>s.armador===a)),[ships,arms]);
-  const armsEmpty=useMemo(()=>arms.filter(a=>!ships.some(s=>s.armador===a)),[ships,arms]);
+  const activeShips=useMemo(()=>ships.filter(s=>!s._purged),[ships]);
+  const armsWithShips=useMemo(()=>arms.filter(a=>activeShips.some(s=>s.armador===a)),[activeShips,arms]);
+  const armsEmpty=useMemo(()=>arms.filter(a=>!activeShips.some(s=>s.armador===a)),[activeShips,arms]);
   const[selArm,setSelArm]=useState(()=>armsWithShips[0]||arms[0]||"");
   // Only auto-select if current armador was deleted from the list
   useEffect(()=>{if(selArm&&arms.length&&!arms.includes(selArm))setSelArm(arms[0])},[arms,selArm]);
   // If no arm selected yet, pick first with ships
   useEffect(()=>{if(!selArm&&armsWithShips.length)setSelArm(armsWithShips[0])},[armsWithShips,selArm]);
 
-  const armShips=useMemo(()=>ships.filter(s=>s.armador===selArm).map(s=>({...s,bookings:s.bookings||[]})).sort((a,b)=>{
+  const armShips=useMemo(()=>activeShips.filter(s=>s.armador===selArm).map(s=>({...s,bookings:(s.bookings||[]).filter(b=>!b._purged)})).sort((a,b)=>{
     const da=a.previsaoSaida?pD(a.previsaoSaida).getTime():Infinity;
     const db=b.previsaoSaida?pD(b.previsaoSaida).getTime():Infinity;
     return da-db;
@@ -936,11 +938,11 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
   const armCfg=armadores.find(a=>a.name===selArm);
   const col=aC(selArm);
 
-  const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?"))setShips(prev=>A(prev).filter(s=>s.id!==id))};
-  const delBkg=(shipId,bkgId)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).filter(b=>b.id!==bkgId)}:s));
+  const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?"))setShips(prev=>A(prev).map(s=>s.id===id?{...s,_purged:true,deletedAt:Date.now(),updatedAt:Date.now()}:s))};
+  const delBkg=(shipId,bkgId)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).map(b=>b.id===bkgId?{...b,_purged:true,deletedAt:Date.now(),updatedAt:Date.now()}:b),updatedAt:Date.now()}:s));
   const updBkg=(shipId,updatedBkg)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).map(b=>b.id===updatedBkg.id?{...b,...updatedBkg}:b)}:s));
 
-  const totNavios=ships.length;const totBkgs=ships.reduce((a,s)=>a+(s.bookings||[]).length,0);
+  const totNavios=activeShips.length;const totBkgs=activeShips.reduce((a,s)=>a+((s.bookings||[]).filter(b=>!b._purged)).length,0);
   const armBkgs=armShips.reduce((a,s)=>a+(s.bookings||[]).length,0);
 
   // Table header style
@@ -974,7 +976,7 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
 
     {/* Armador tabs — styled like spreadsheet tabs */}
     <div style={{display:"flex",gap:0,borderBottom:`3px solid ${col}`,marginBottom:0,overflowX:"auto",paddingBottom:0}}>
-      {arms.map(arm=>{const ac=aC(arm);const isActive=arm===selArm;const shipCount=ships.filter(s=>s.armador===arm).length;
+      {arms.map(arm=>{const ac=aC(arm);const isActive=arm===selArm;const shipCount=activeShips.filter(s=>s.armador===arm).length;
         return(<button key={arm} onClick={()=>setSelArm(arm)} style={{
           padding:"9px 18px",borderRadius:"8px 8px 0 0",border:isActive?`2px solid ${ac}`:"2px solid #E2E8F0",
           borderBottom:isActive?`3px solid ${ac}`:"2px solid transparent",
@@ -1123,9 +1125,11 @@ export default function App(){
   const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);const[showBackups,setShowBackups]=useState(false);
   const[refreshing,setRefreshing]=useState(false);const[online,setOnline]=useState(!!supabase);
 
-  // Flag: quando true, o próximo render NÃO deve disparar save
-  // (o estado veio do remoto — evita eco de gravação).
-  const applyingRemoteRef=useRef(false);
+  // Contador: incrementa a cada apply remoto, o save-useEffect captura
+  // o valor ANTES de rodar e compara DEPOIS — se mudou, pula o save.
+  // Isso elimina a race-condition do setTimeout de 80ms.
+  const remoteVersionRef=useRef(0);
+  const savingRef=useRef(false); // evita saves concorrentes
   const[saveStatus,setSaveStatus]=useState("idle"); // idle | saving | ok | error
   const[lastSavedAt,setLastSavedAt]=useState(null);
 
@@ -1150,7 +1154,7 @@ export default function App(){
   };
 
   const applyState=useCallback((d,fromRemote=false)=>{
-    if(fromRemote)applyingRemoteRef.current=true;
+    if(fromRemote)remoteVersionRef.current++;
     if(d.bookings)  setBookings(prev=>mergeArr(prev,d.bookings));
     if(d.pendencias)setPendencias(prev=>mergeArr(prev,d.pendencias));
     if(d.ships)     setShips(prev=>mergeArr(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
@@ -1162,8 +1166,6 @@ export default function App(){
     }
     if(d.armadores?.length)setArmadores(d.armadores);
     if(d.logo!==undefined)setLogo(d.logo);
-    // Solta o flag após o ciclo de render
-    if(fromRemote)setTimeout(()=>{applyingRemoteRef.current=false},80);
   },[]);
 
   // LOAD inicial (usa substituição, não merge — é o primeiro estado)
@@ -1171,7 +1173,7 @@ export default function App(){
     if(supabase){
       const d=await loadState();
       if(d&&Object.keys(d).length>0){
-        applyingRemoteRef.current=true;
+        remoteVersionRef.current++;
         if(d.bookings)  setBookings(dedupeById(d.bookings));
         if(d.pendencias)setPendencias(dedupeById(d.pendencias));
         if(d.ships)     setShips(dedupeById(d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
@@ -1181,7 +1183,6 @@ export default function App(){
         if(u.length)setUsers(u);
         if(d.armadores?.length)setArmadores(d.armadores);
         if(d.logo!==undefined)setLogo(d.logo);
-        setTimeout(()=>{applyingRemoteRef.current=false},80);
       }
       setOnline(true);
     }else{
@@ -1189,7 +1190,7 @@ export default function App(){
         const raw=localStorage.getItem("booking-control-data");
         if(raw){
           const d=JSON.parse(raw);
-          applyingRemoteRef.current=true;
+          remoteVersionRef.current++;
           if(d.bookings)setBookings(dedupeById(d.bookings));
           if(d.pendencias)setPendencias(dedupeById(d.pendencias));
           if(d.ships)setShips(dedupeById(d.ships));
@@ -1197,7 +1198,6 @@ export default function App(){
           if(d.users?.length)setUsers(d.users);
           if(d.armadores?.length)setArmadores(d.armadores);
           if(d.logo!==undefined)setLogo(d.logo);
-          setTimeout(()=>{applyingRemoteRef.current=false},80);
         }
       }catch{}
     }
@@ -1208,9 +1208,12 @@ export default function App(){
   const backupRef=useRef(0);
 
   // SAVE on change — pula se o estado veio do remoto (evita eco).
+  // Usa contador: captura o valor ANTES, compara DEPOIS do debounce.
+  // Se mudou, significa que um apply remoto aconteceu — NÃO salva.
   useEffect(()=>{
     if(!loaded)return;
-    if(applyingRemoteRef.current)return; // ← crítico: sem eco
+    // Captura o "snapshot" do contador remoto NESTE momento
+    const versionSnapshot=remoteVersionRef.current;
     const cleanBookings=dedupeById(bookings);
     const cleanPendencias=dedupeById(pendencias);
     const cleanShips=dedupeById(ships);
@@ -1228,19 +1231,30 @@ export default function App(){
       setSaveStatus("saving");
       if(saveRef.current)clearTimeout(saveRef.current);
       saveRef.current=setTimeout(async()=>{
+        // Se o contador mudou desde que agendamos, um apply remoto ocorreu — pula
+        if(remoteVersionRef.current!==versionSnapshot){
+          setSaveStatus("ok");
+          return;
+        }
+        // Evita saves concorrentes (espera o anterior terminar)
+        if(savingRef.current){
+          // Re-agenda: ao terminar o save atual, este estado será re-triggerado
+          setSaveStatus("saving");
+          return;
+        }
+        savingRef.current=true;
         try{
           const res=await saveState(state,user.name);
           if(res&&res.ok){
             setSaveStatus("ok");
             setLastSavedAt(Date.now());
-            // Se o merge no servidor trouxe dados de outros usuários, aplica de volta
+            // Se o merge no servidor trouxe dados de outros usuários, aplica MERGE (não replace)
             if(res.data){
-              applyingRemoteRef.current=true;
-              if(res.data.bookings)    setBookings(dedupeById(res.data.bookings));
-              if(res.data.pendencias)  setPendencias(dedupeById(res.data.pendencias));
-              if(res.data.ships)       setShips(dedupeById(res.data.ships));
-              if(res.data.solicitacoes)setSolicitacoes(dedupeById(res.data.solicitacoes));
-              setTimeout(()=>{applyingRemoteRef.current=false},80);
+              remoteVersionRef.current++;
+              if(res.data.bookings)    setBookings(prev=>mergeArr(prev,res.data.bookings));
+              if(res.data.pendencias)  setPendencias(prev=>mergeArr(prev,res.data.pendencias));
+              if(res.data.ships)       setShips(prev=>mergeArr(prev,res.data.ships));
+              if(res.data.solicitacoes)setSolicitacoes(prev=>mergeArr(prev,res.data.solicitacoes));
             }
           }else{
             setSaveStatus("error");
@@ -1249,8 +1263,10 @@ export default function App(){
         }catch(e){
           setSaveStatus("error");
           console.warn("Save error",e);
+        }finally{
+          savingRef.current=false;
         }
-      },500);
+      },800);
     }
   },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded]);
 
@@ -1381,7 +1397,7 @@ export default function App(){
         if(!window.confirm("Restaurar este backup? O estado atual será substituído (uma cópia de segurança do estado atual é feita automaticamente)."))return;
         // Salva snapshot do estado atual antes de restaurar
         pushLocalBackup({bookings,pendencias,ships,solicitacoes,users,armadores,logo});
-        applyingRemoteRef.current=true;
+        remoteVersionRef.current++;
         if(s.bookings)setBookings(dedupeById(s.bookings));
         if(s.pendencias)setPendencias(dedupeById(s.pendencias));
         if(s.ships)setShips(dedupeById(s.ships));
@@ -1389,7 +1405,7 @@ export default function App(){
         if(s.users?.length)setUsers(s.users);
         if(s.armadores?.length)setArmadores(s.armadores);
         if(s.logo!==undefined)setLogo(s.logo);
-        setTimeout(()=>{applyingRemoteRef.current=false;setShowBackups(false);alert("Backup restaurado. As alterações serão sincronizadas em instantes.")},100);
+        setTimeout(()=>{setShowBackups(false);alert("Backup restaurado. As alterações serão sincronizadas em instantes.")},100);
       }}/>}
     </div>
   </ErrorBoundary>);
