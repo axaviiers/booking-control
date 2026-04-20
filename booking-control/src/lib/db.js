@@ -30,6 +30,12 @@ function mergeCollection(remoteArr, localArr, itemMerger) {
     const prev = map.get(item.id)
     if (!prev) { map.set(item.id, item); return }
     if (itemMerger) { map.set(item.id, itemMerger(prev, item)); return }
+    // Regra anti-ressurreição: se qualquer versão tem _purged ou deletedAt,
+    // a versão deletada SEMPRE vence (evita que outro cliente "ressuscite" dados).
+    const itemDel = !!(item._purged || item.deletedAt)
+    const prevDel = !!(prev._purged || prev.deletedAt)
+    if (itemDel && !prevDel) { map.set(item.id, item); return }
+    if (prevDel && !itemDel) return // mantém o deletado
     // Tie-break: mais recente vence; em empate, mantém o primeiro.
     if (ts(item) > ts(prev)) map.set(item.id, item)
   }
