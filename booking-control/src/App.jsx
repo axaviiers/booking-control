@@ -561,15 +561,9 @@ function Notifications({bookings,ships,armadores,notifPerm,onRequestPerm}){
 function BookingsPanel({data,setData,armadores,user}){
   const[showNew,setShowNew]=useState(false);const[sel,setSel]=useState(null);const[filter,setFilter]=useState("Todos");const[tick,setTick]=useState(0);
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),1000);return()=>clearInterval(i)},[]);
-  // Auto-purge: Aprovado after 3 days, Enviado ao cliente after 1h, trashed after 5 days
-  // Auto-purge APENAS "Enviado ao cliente" após 1h (abril/2026).
-  // Aprovado e Lixeira não são mais apagados automaticamente.
-  // CORREÇÃO: usa soft-delete (_purged) em vez de .filter() para não perder dados.
-  useEffect(()=>{
-    const shouldClean=A(data).some(r=>isEnvExp(r)&&!r._purged);
-    if(shouldClean)setData(prev=>A(prev).map(r=>isEnvExp(r)&&!r._purged?{...r,_purged:true,deletedAt:Date.now(),updatedAt:Date.now()}:r));
-  },[data]);
-  const active=A(data).filter(r=>!isTrashed(r)&&!r._purged);
+  // Sem auto-purge! Itens "Enviado ao cliente" expirados (>1h) são apenas OCULTADOS na UI.
+  // Nenhum dado é modificado automaticamente — só ações do usuário alteram dados.
+  const active=A(data).filter(r=>!isTrashed(r)&&!r._purged&&!isEnvExp(r));
   const activeNoEnv=active.filter(r=>r.status!=="Enviado ao cliente");
   const escC=activeNoEnv.filter(isEsc).length,urgC=activeNoEnv.filter(isUrg).length;
   const envCount=active.filter(r=>r.status==="Enviado ao cliente").length;
@@ -647,12 +641,9 @@ function PendenciasPanel({data,setData,user}){
   const[showNew,setShowNew]=useState(false);const[editP,setEditP]=useState(null);const[selP,setSelP]=useState(null);const[cmt,setCmt]=useState("");
   const[tick,setTick]=useState(0);
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),30000);return()=>clearInterval(i)},[]);
-  // Auto-purge resolved after 1 hour
-  useEffect(()=>{
-    const shouldClean=A(data).some(d=>d.resolved&&!d._deleted&&d.resolvedAt&&(Date.now()-d.resolvedAt)>ONE_HOUR);
-    if(shouldClean)setData(prev=>A(prev).map(x=>(x.resolved&&!x._deleted&&x.resolvedAt&&(Date.now()-x.resolvedAt)>ONE_HOUR)?{...x,_deleted:true}:x));
-  },[data,tick]);
-  const pending=A(data).filter(d=>!d.resolved&&!d._deleted);const resolved=A(data).filter(d=>d.resolved&&!d._deleted);
+  // Sem auto-purge! Pendências resolvidas >1h são apenas OCULTADAS na UI.
+  const pending=A(data).filter(d=>!d.resolved&&!d._deleted);
+  const resolved=A(data).filter(d=>d.resolved&&!d._deleted&&d.resolvedAt&&(Date.now()-d.resolvedAt)<=ONE_HOUR);
   const fmtRemaining=(resolvedAt)=>{if(!resolvedAt)return"";const left=Math.max(0,ONE_HOUR-(Date.now()-resolvedAt));const m=Math.ceil(left/60000);return m>0?`${m}min restante${m>1?"s":""}`:""};
   return(<div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
@@ -1120,17 +1111,36 @@ function BackupRecovery({onClose,onRestore}){
 // ═════════════════════════════════════════════
 export default function App(){
   const[user,setUser]=useState(null);const[tab,setTab]=useState("bookings");const[loaded,setLoaded]=useState(false);
-  const[bookings,setBookings]=useState([]);const[pendencias,setPendencias]=useState([]);const[ships,setShips]=useState([]);const[solicitacoes,setSolicitacoes]=useState([]);
+  // ── Setters "raw" (uso interno — realtime, sync, load) ──
+  // Modificar estes NÃO dispara save ao Supabase.
+  const[bookings,setBookingsRaw]=useState([]);const[pendencias,setPendenciasRaw]=useState([]);
+  const[ships,setShipsRaw]=useState([]);const[solicitacoes,setSolicitacoesRaw]=useState([]);
   const[users,setUsers]=useState(USR_DEF);const[armadores,setArmadores]=useState(ARM_DEF);const[logo,setLogo]=useState(null);
   const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);const[showBackups,setShowBackups]=useState(false);
   const[refreshing,setRefreshing]=useState(false);const[online,setOnline]=useState(!!supabase);
-  const[dbError,setDbError]=useState(null); // erro de conexão com o banco
-
+  const[dbError,setDbError]=useState(null);
   const[saveStatus,setSaveStatus]=useState("idle");
   const[lastSavedAt,setLastSavedAt]=useState(null);
+
+  // ── Contador de mudanças do USUÁRIO ──
+  // Só incrementa quando o usuário faz uma ação (criar, editar, deletar).
+  // Realtime e sync NUNCA incrementam — logo NUNCA disparam save.
+  const userChangeRef=useRef(0);
+  const savedChangeRef=useRef(0);
   const lastSavedVersionRef=useRef(0);
   const savingRef=useRef(false);
-  const pendingSaveRef=useRef(null); // fila: guarda o último estado que precisa ser salvo
+  const pendingSaveRef=useRef(null);
+
+  // ── Setters "wrapped" (passados aos componentes — ações do USUÁRIO) ──
+  // Incrementam o contador → disparam save ao Supabase.
+  const setBookings=useCallback((updater)=>{userChangeRef.current++;setBookingsRaw(updater)},[]);
+  const setPendencias=useCallback((updater)=>{userChangeRef.current++;setPendenciasRaw(updater)},[]);
+  const setShips=useCallback((updater)=>{userChangeRef.current++;setShipsRaw(updater)},[]);
+  const setSolicitacoes=useCallback((updater)=>{userChangeRef.current++;setSolicitacoesRaw(updater)},[]);
+  // Users/armadores/logo mudam por ação do usuário → também incrementam
+  const setUsersWrapped=useCallback((v)=>{userChangeRef.current++;setUsers(v)},[]);
+  const setArmadoresWrapped=useCallback((v)=>{userChangeRef.current++;setArmadores(v)},[]);
+  const setLogoWrapped=useCallback((v)=>{userChangeRef.current++;setLogo(v)},[]);
 
   const dedupeById=(arr)=>{
     const m=new Map();
@@ -1148,11 +1158,12 @@ export default function App(){
     return dedupeById([...(localArr||[]),...(newArr||[])]);
   };
 
+  // ── applyState: usa setters RAW — NUNCA dispara save ──
   const applyState=useCallback((d)=>{
-    if(d.bookings)  setBookings(prev=>mergeArr(prev,d.bookings));
-    if(d.pendencias)setPendencias(prev=>mergeArr(prev,d.pendencias));
-    if(d.ships)     setShips(prev=>mergeArr(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
-    if(d.solicitacoes)setSolicitacoes(prev=>mergeArr(prev,d.solicitacoes));
+    if(d.bookings)  setBookingsRaw(prev=>mergeArr(prev,d.bookings));
+    if(d.pendencias)setPendenciasRaw(prev=>mergeArr(prev,d.pendencias));
+    if(d.ships)     setShipsRaw(prev=>mergeArr(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
+    if(d.solicitacoes)setSolicitacoesRaw(prev=>mergeArr(prev,d.solicitacoes));
     if(d.users){
       const merged=[...(d.users||[])];
       USR_DEF.forEach(def=>{if(!merged.find(u=>u.username===def.username))merged.push(def)});
@@ -1163,43 +1174,34 @@ export default function App(){
   },[]);
 
   // ═══════════════════════════════════════════════
-  // LOAD INICIAL — testa conexão + merge Supabase + localStorage
+  // LOAD INICIAL
   // ═══════════════════════════════════════════════
   useEffect(()=>{(async()=>{
     const localData=loadLocalState();
-
     if(supabase){
-      // Testa conexão ANTES de tudo
       const connTest=await testConnection();
       if(!connTest.ok){
-        console.error('[LOAD] Conexão falhou:', connTest.error);
-        setDbError(connTest.error);
-        setOnline(false);
-        // Fallback: usa dados locais
+        setDbError(connTest.error);setOnline(false);
         if(localData){
-          if(localData.bookings)setBookings(dedupeById(localData.bookings));
-          if(localData.pendencias)setPendencias(dedupeById(localData.pendencias));
-          if(localData.ships)setShips(dedupeById(localData.ships));
-          if(localData.solicitacoes)setSolicitacoes(dedupeById(localData.solicitacoes));
+          if(localData.bookings)setBookingsRaw(dedupeById(localData.bookings));
+          if(localData.pendencias)setPendenciasRaw(dedupeById(localData.pendencias));
+          if(localData.ships)setShipsRaw(dedupeById(localData.ships));
+          if(localData.solicitacoes)setSolicitacoesRaw(dedupeById(localData.solicitacoes));
           if(localData.users?.length)setUsers(localData.users);
           if(localData.armadores?.length)setArmadores(localData.armadores);
           if(localData.logo!==undefined)setLogo(localData.logo);
         }
-        setLoaded(true);
-        return;
+        setLoaded(true);return;
       }
-
       setDbError(null);
       const remoteData=await loadState();
-      if(remoteData) lastSavedVersionRef.current=remoteData.__version||0;
-
-      // MERGE: Supabase + localStorage (nunca perde dados)
+      if(remoteData)lastSavedVersionRef.current=remoteData.__version||0;
       const merged=mergeStates(remoteData,localData);
       if(merged&&Object.keys(merged).length>0){
-        if(merged.bookings)  setBookings(dedupeById(merged.bookings));
-        if(merged.pendencias)setPendencias(dedupeById(merged.pendencias));
-        if(merged.ships)     setShips(dedupeById((merged.ships||[]).map(s=>({...s,bookings:s.bookings||[]}))));
-        if(merged.solicitacoes)setSolicitacoes(dedupeById(merged.solicitacoes));
+        if(merged.bookings)setBookingsRaw(dedupeById(merged.bookings));
+        if(merged.pendencias)setPendenciasRaw(dedupeById(merged.pendencias));
+        if(merged.ships)setShipsRaw(dedupeById((merged.ships||[]).map(s=>({...s,bookings:s.bookings||[]}))));
+        if(merged.solicitacoes)setSolicitacoesRaw(dedupeById(merged.solicitacoes));
         const u=[...(merged.users||[])];
         USR_DEF.forEach(def=>{if(!u.find(x=>x.username===def.username))u.push(def)});
         if(u.length)setUsers(u);
@@ -1209,10 +1211,10 @@ export default function App(){
       setOnline(true);
     }else{
       if(localData){
-        if(localData.bookings)setBookings(dedupeById(localData.bookings));
-        if(localData.pendencias)setPendencias(dedupeById(localData.pendencias));
-        if(localData.ships)setShips(dedupeById(localData.ships));
-        if(localData.solicitacoes)setSolicitacoes(dedupeById(localData.solicitacoes));
+        if(localData.bookings)setBookingsRaw(dedupeById(localData.bookings));
+        if(localData.pendencias)setPendenciasRaw(dedupeById(localData.pendencias));
+        if(localData.ships)setShipsRaw(dedupeById(localData.ships));
+        if(localData.solicitacoes)setSolicitacoesRaw(dedupeById(localData.solicitacoes));
         if(localData.users?.length)setUsers(localData.users);
         if(localData.armadores?.length)setArmadores(localData.armadores);
         if(localData.logo!==undefined)setLogo(localData.logo);
@@ -1225,13 +1227,11 @@ export default function App(){
   const backupRef=useRef(0);
 
   // ═══════════════════════════════════════════════
-  // doSave — função que efetivamente grava no Supabase.
-  // Se outro save está rodando, ENFILEIRA (não descarta).
+  // doSave — grava no Supabase com fila (nunca descarta)
   // ═══════════════════════════════════════════════
   const doSave=useCallback(async(state,userName)=>{
     if(!supabase||!userName)return;
     if(savingRef.current){
-      // Outro save está rodando → enfileira este estado para salvar depois
       pendingSaveRef.current={state,userName};
       return;
     }
@@ -1240,34 +1240,29 @@ export default function App(){
     try{
       const res=await saveState(state,userName);
       if(res&&res.ok){
-        setSaveStatus("ok");
-        setLastSavedAt(Date.now());
-        setDbError(null);
+        setSaveStatus("ok");setLastSavedAt(Date.now());setDbError(null);
         lastSavedVersionRef.current=res.version;
       }else{
         setSaveStatus("error");
-        setDbError("Falha ao salvar: "+(res?.reason||"erro desconhecido"));
-        console.warn("Save failed:",res?.reason);
+        setDbError("Falha ao salvar: "+(res?.reason||"desconhecido"));
       }
     }catch(e){
       setSaveStatus("error");
-      setDbError("Exceção ao salvar: "+(e?.message||e));
-      console.warn("Save error",e);
+      setDbError("Erro: "+(e?.message||e));
     }finally{
       savingRef.current=false;
-      // Se tem save enfileirado, executa agora
       const pending=pendingSaveRef.current;
       if(pending){
         pendingSaveRef.current=null;
-        // Executa no próximo tick para não empilhar stack
         setTimeout(()=>doSave(pending.state,pending.userName),50);
       }
     }
   },[]);
 
   // ═══════════════════════════════════════════════
-  // SAVE — dispara quando qualquer dado muda.
-  // INCLUI `user` nos deps para salvar ao logar.
+  // SAVE — SOMENTE quando o USUÁRIO fez algo.
+  // Realtime e sync usam setters RAW → não incrementam
+  // o contador → este useEffect roda mas NÃO salva.
   // ═══════════════════════════════════════════════
   useEffect(()=>{
     if(!loaded)return;
@@ -1278,17 +1273,14 @@ export default function App(){
       solicitacoes:dedupeById(solicitacoes),
       users,armadores,logo
     };
-
-    // SEMPRE salva localmente de imediato
+    // SEMPRE salva localmente (rede de segurança)
     saveLocalState(state);
-
     // Backup rotativo a cada 2 min
-    if(Date.now()-backupRef.current>120000){
-      backupRef.current=Date.now();
-      pushLocalBackup(state);
-    }
-
-    // Salvamento remoto com debounce de 600ms
+    if(Date.now()-backupRef.current>120000){backupRef.current=Date.now();pushLocalBackup(state)}
+    // Só salva no Supabase se o USUÁRIO fez alguma mudança
+    const hasUserChange=userChangeRef.current!==savedChangeRef.current;
+    if(!hasUserChange)return; // ← CRÍTICO: realtime/sync NÃO chega aqui
+    savedChangeRef.current=userChangeRef.current;
     if(supabase&&user&&!dbError){
       if(saveRef.current)clearTimeout(saveRef.current);
       saveRef.current=setTimeout(()=>doSave(state,user.name),600);
@@ -1296,42 +1288,24 @@ export default function App(){
   },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded,user,dbError,doSave]);
 
   // ═══════════════════════════════════════════════
-  // SYNC PERIÓDICO — rede de segurança a cada 30s.
-  // Re-lê do Supabase e mescla, garantindo que nenhum
-  // dado se perca mesmo se o realtime falhar.
+  // REALTIME — usa setters RAW (não dispara save)
   // ═══════════════════════════════════════════════
-  useEffect(()=>{
-    if(!supabase||!loaded)return;
-    const iv=setInterval(async()=>{
-      try{
-        const d=await loadState();
-        if(d){
-          lastSavedVersionRef.current=Math.max(lastSavedVersionRef.current,d.__version||0);
-          applyState(d);
-        }
-      }catch(e){console.warn("Periodic sync error",e)}
-    },30000);
-    return()=>clearInterval(iv);
-  },[loaded,applyState]);
-
-  // REALTIME
   useEffect(()=>{
     if(!supabase)return;
     const unsub=subscribeToChanges((newData,version)=>{
       try{
         if(version&&version<=lastSavedVersionRef.current)return;
         applyState(newData);
-      }catch(e){console.warn("Apply state error",e)}
+      }catch(e){console.warn("Realtime error",e)}
     });
     return unsub;
   },[applyState]);
 
-  // Alerta ao sair com dados não salvos
+  // Alerta ao sair com save pendente
   useEffect(()=>{
     const handler=(e)=>{
       if(savingRef.current||pendingSaveRef.current){
-        e.preventDefault();
-        e.returnValue="Salvamento em andamento. Deseja sair?";
+        e.preventDefault();e.returnValue="Salvamento em andamento...";
       }
     };
     window.addEventListener("beforeunload",handler);
@@ -1461,12 +1435,12 @@ export default function App(){
         <Notifications bookings={bookings} ships={ships} armadores={armadores} notifPerm={notifPerm} onRequestPerm={()=>{if("Notification" in window)Notification.requestPermission().then(p=>setNotifPerm(p))}}/>
         {tab==="bookings"&&<BookingsPanel data={bookings} setData={setBookings} armadores={armadores} user={user}/>}
         {tab==="pendencias"&&<PendenciasPanel data={pendencias} setData={setPendencias} user={user}/>}
-        {tab==="standby"&&<StandbyPanel ships={ships} setShips={setShips} solicitacoes={solicitacoes} setSolicitacoes={setSolicitacoes} armadores={armadores} setArmadores={setArmadores} user={user}/>}
+        {tab==="standby"&&<StandbyPanel ships={ships} setShips={setShips} solicitacoes={solicitacoes} setSolicitacoes={setSolicitacoes} armadores={armadores} setArmadores={setArmadoresWrapped} user={user}/>}
         {tab==="lixeira"&&<LixeiraPanel data={bookings} setData={setBookings}/>}
       </div>
-      {showUsers&&<UserManager users={users} onSave={l=>{setUsers(l);setShowUsers(false)}} onClose={()=>setShowUsers(false)}/>}
-      {showArm&&<ArmadorManager armadores={armadores} onSave={l=>{setArmadores(l);setShowArm(false)}} onClose={()=>setShowArm(false)}/>}
-      {showLogo&&<LogoManager logo={logo} onSave={l=>{setLogo(l);setShowLogo(false)}} onClose={()=>setShowLogo(false)}/>}
+      {showUsers&&<UserManager users={users} onSave={l=>{setUsersWrapped(l);setShowUsers(false)}} onClose={()=>setShowUsers(false)}/>}
+      {showArm&&<ArmadorManager armadores={armadores} onSave={l=>{setArmadoresWrapped(l);setShowArm(false)}} onClose={()=>setShowArm(false)}/>}
+      {showLogo&&<LogoManager logo={logo} onSave={l=>{setLogoWrapped(l);setShowLogo(false)}} onClose={()=>setShowLogo(false)}/>}
       {showBackups&&<BackupRecovery onClose={()=>setShowBackups(false)} onRestore={(s)=>{
         if(!window.confirm("Restaurar este backup? O estado atual será substituído (uma cópia de segurança do estado atual é feita automaticamente)."))return;
         // Salva snapshot do estado atual antes de restaurar
@@ -1475,9 +1449,9 @@ export default function App(){
         if(s.pendencias)setPendencias(dedupeById(s.pendencias));
         if(s.ships)setShips(dedupeById(s.ships));
         if(s.solicitacoes)setSolicitacoes(dedupeById(s.solicitacoes));
-        if(s.users?.length)setUsers(s.users);
-        if(s.armadores?.length)setArmadores(s.armadores);
-        if(s.logo!==undefined)setLogo(s.logo);
+        if(s.users?.length)setUsersWrapped(s.users);
+        if(s.armadores?.length)setArmadoresWrapped(s.armadores);
+        if(s.logo!==undefined)setLogoWrapped(s.logo);
         setTimeout(()=>{setShowBackups(false);alert("Backup restaurado. As alterações serão sincronizadas em instantes.")},100);
       }}/>}
     </div>
