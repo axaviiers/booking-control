@@ -1227,7 +1227,7 @@ export default function App(){
   const backupRef=useRef(0);
 
   // ═══════════════════════════════════════════════
-  // doSave — grava no Supabase com fila (nunca descarta)
+  // doSave — grava no Supabase. NUNCA desiste — se falhar, tenta de novo.
   // ═══════════════════════════════════════════════
   const doSave=useCallback(async(state,userName)=>{
     if(!supabase||!userName)return;
@@ -1242,27 +1242,57 @@ export default function App(){
       if(res&&res.ok){
         setSaveStatus("ok");setLastSavedAt(Date.now());setDbError(null);
         lastSavedVersionRef.current=res.version;
+        // VERIFICAÇÃO: lê de volta e compara contagens
+        try{
+          const verify=await loadState();
+          if(verify){
+            const savedBk=(verify.bookings||[]).length;
+            const localBk=(state.bookings||[]).length;
+            const savedSh=(verify.ships||[]).length;
+            const localSh=(state.ships||[]).length;
+            if(savedBk<localBk||savedSh<localSh){
+              console.warn('[VERIFY] Dados perdidos no save! Local:',localBk,'bk',localSh,'sh → Supabase:',savedBk,'bk',savedSh,'sh. Tentando de novo...');
+              // Re-save com os dados locais (que têm mais itens)
+              savingRef.current=false;
+              setTimeout(()=>doSave(state,userName),500);
+              return;
+            }
+          }
+        }catch(ve){console.warn('[VERIFY] erro:',ve)}
       }else{
         setSaveStatus("error");
-        setDbError("Falha ao salvar: "+(res?.reason||"desconhecido"));
+        const reason=res?.reason||"desconhecido";
+        setDbError("Falha: "+reason);
+        console.warn("Save failed:",reason);
+        // RETRY automático após 3 segundos (não bloqueia saves futuros!)
+        savingRef.current=false;
+        setTimeout(()=>{
+          console.log('[RETRY] Tentando salvar novamente...');
+          doSave(state,userName);
+        },3000);
+        return;
       }
     }catch(e){
       setSaveStatus("error");
       setDbError("Erro: "+(e?.message||e));
+      // RETRY automático
+      savingRef.current=false;
+      setTimeout(()=>doSave(state,userName),3000);
+      return;
     }finally{
       savingRef.current=false;
       const pending=pendingSaveRef.current;
       if(pending){
         pendingSaveRef.current=null;
-        setTimeout(()=>doSave(pending.state,pending.userName),50);
+        setTimeout(()=>doSave(pending.state,pending.userName),100);
       }
     }
   },[]);
 
   // ═══════════════════════════════════════════════
   // SAVE — SOMENTE quando o USUÁRIO fez algo.
-  // Realtime e sync usam setters RAW → não incrementam
-  // o contador → este useEffect roda mas NÃO salva.
+  // SEM debounce — salva IMEDIATAMENTE.
+  // SEM gate de dbError — SEMPRE tenta salvar.
   // ═══════════════════════════════════════════════
   useEffect(()=>{
     if(!loaded)return;
@@ -1273,19 +1303,20 @@ export default function App(){
       solicitacoes:dedupeById(solicitacoes),
       users,armadores,logo
     };
-    // SEMPRE salva localmente (rede de segurança)
+    // SEMPRE salva localmente (rede de segurança instantânea)
     saveLocalState(state);
     // Backup rotativo a cada 2 min
     if(Date.now()-backupRef.current>120000){backupRef.current=Date.now();pushLocalBackup(state)}
     // Só salva no Supabase se o USUÁRIO fez alguma mudança
     const hasUserChange=userChangeRef.current!==savedChangeRef.current;
-    if(!hasUserChange)return; // ← CRÍTICO: realtime/sync NÃO chega aqui
+    if(!hasUserChange)return;
     savedChangeRef.current=userChangeRef.current;
-    if(supabase&&user&&!dbError){
+    // SALVA IMEDIATAMENTE — sem debounce, sem gate de erro
+    if(supabase&&user){
       if(saveRef.current)clearTimeout(saveRef.current);
-      saveRef.current=setTimeout(()=>doSave(state,user.name),600);
+      saveRef.current=setTimeout(()=>doSave(state,user.name),200);
     }
-  },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded,user,dbError,doSave]);
+  },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded,user,doSave]);
 
   // ═══════════════════════════════════════════════
   // REALTIME — usa setters RAW (não dispara save)
@@ -1457,3 +1488,4 @@ export default function App(){
     </div>
   </ErrorBoundary>);
 }
+
