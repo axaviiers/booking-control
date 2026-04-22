@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups, loadLocalState, saveLocalState, testConnection } from "./lib/db.js";
+import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups, loadLocalState, saveLocalState, testConnection, getLog } from "./lib/db.js";
 
 const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000,ONE_HOUR=3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
@@ -1117,6 +1117,7 @@ export default function App(){
   const[ships,setShipsRaw]=useState([]);const[solicitacoes,setSolicitacoesRaw]=useState([]);
   const[users,setUsers]=useState(USR_DEF);const[armadores,setArmadores]=useState(ARM_DEF);const[logo,setLogo]=useState(null);
   const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);const[showBackups,setShowBackups]=useState(false);
+  const[showLog,setShowLog]=useState(false);
   const[refreshing,setRefreshing]=useState(false);const[online,setOnline]=useState(!!supabase);
   const[dbError,setDbError]=useState(null);
   const[saveStatus,setSaveStatus]=useState("idle");
@@ -1441,6 +1442,7 @@ export default function App(){
             {saveStatus==="saving"?"💾 Salvando...":saveStatus==="error"?"⚠ Erro ao salvar":saveStatus==="ok"?`✓ Salvo${lastSavedAt?" "+new Date(lastSavedAt).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):""}`:"· Pronto"}
           </div>
           <button onClick={refresh} style={{...bG,padding:"6px 10px",fontSize:11,display:"flex",alignItems:"center",gap:4}}><span style={{display:"inline-block",animation:refreshing?"spin .6s linear infinite":"none",fontSize:12}}>🔄</span></button>
+          <button onClick={()=>setShowLog(!showLog)} style={{...bG,padding:"6px 10px",fontSize:11,background:showLog?"#DBEAFE":"#fff"}} title="Log de diagnóstico">📋</button>
           {user.role==="gerencia"&&<button onClick={()=>setShowBackups(true)} style={{...bG,padding:"6px 10px",fontSize:11}} title="Backups locais (recuperação de dados)">💾</button>}
           {user.role==="gerencia"&&<button onClick={()=>setShowUsers(true)} style={{...bG,padding:"6px 10px",fontSize:11}}>👥</button>}
           <button onClick={()=>setShowArm(true)} style={{...bG,padding:"6px 10px",fontSize:11}}>⚓</button>
@@ -1457,6 +1459,14 @@ export default function App(){
         <p style={{color:"#991B1B",fontSize:11,marginTop:4}}>{dbError}</p>
         <p style={{color:"#B91C1C",fontSize:10,marginTop:4}}>⚠ Os dados estão sendo salvos APENAS localmente neste navegador. Outros usuários NÃO verão suas alterações.</p>
         <button onClick={refresh} style={{marginTop:6,padding:"4px 12px",borderRadius:6,border:"1px solid #DC2626",background:"#fff",color:"#DC2626",fontSize:10,fontWeight:600,cursor:"pointer"}}>🔄 Tentar reconectar</button>
+      </div>}
+      {showLog&&<div style={{padding:"10px 24px",background:"#1E293B",borderBottom:"2px solid #475569",maxHeight:200,overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <p style={{color:"#94A3B8",fontSize:10,fontWeight:700}}>📋 LOG DE DIAGNÓSTICO — Dados na memória: {bookings.length} bookings · {ships.length} navios · {pendencias.length} pendências · {solicitacoes.length} solicitações</p>
+          <button onClick={()=>setShowLog(false)} style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:12}}>✕</button>
+        </div>
+        {getLog().slice().reverse().map((entry,i)=><p key={i} style={{color:entry.includes("❌")||entry.includes("🚨")?"#F87171":entry.includes("✅")||entry.includes("✓")?"#4ADE80":entry.includes("⚠")?"#FBBF24":"#CBD5E1",fontSize:10,fontFamily:"monospace",lineHeight:1.6}}>{entry}</p>)}
+        {getLog().length===0&&<p style={{color:"#64748B",fontSize:10}}>Nenhuma operação registrada ainda</p>}
       </div>}
       <div style={{padding:"12px 24px 0",background:"#fff",borderBottom:"1px solid #E2E8F0",display:"flex",gap:4}}>
         {TABS.map(t=>{const a=tab===t.id;return(<button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"10px 20px",borderRadius:"8px 8px 0 0",border:a?`2px solid ${t.c}`:"2px solid transparent",borderBottom:a?"2px solid #fff":"2px solid transparent",background:a?t.bg:"transparent",color:a?t.c:"#94A3B8",fontSize:12,fontWeight:a?700:500,cursor:"pointer",fontFamily:"inherit",marginBottom:"-1px",display:"flex",alignItems:"center",gap:6}}><span>{t.icon}</span>{t.label}</button>)})}
