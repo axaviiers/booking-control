@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups, loadLocalState, saveLocalState } from "./lib/db.js";
+import { loadState, saveState, subscribeToChanges, supabase, mergeStates, pushLocalBackup, listLocalBackups, loadLocalState, saveLocalState, testConnection } from "./lib/db.js";
 
 const SLA_MS=2*3600000,URGENT_MS=30*60000,THREE_DAYS=3*24*3600000,FIVE_DAYS=5*24*3600000,TWO_DAYS=2*24*3600000,ONE_HOUR=3600000;
 const BRAND="#0F4C81",BRAND_LT="#E8F0F8";
@@ -1124,40 +1124,30 @@ export default function App(){
   const[users,setUsers]=useState(USR_DEF);const[armadores,setArmadores]=useState(ARM_DEF);const[logo,setLogo]=useState(null);
   const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);const[showBackups,setShowBackups]=useState(false);
   const[refreshing,setRefreshing]=useState(false);const[online,setOnline]=useState(!!supabase);
+  const[dbError,setDbError]=useState(null); // erro de conexão com o banco
 
-  const[saveStatus,setSaveStatus]=useState("idle"); // idle | saving | ok | error
+  const[saveStatus,setSaveStatus]=useState("idle");
   const[lastSavedAt,setLastSavedAt]=useState(null);
-
-  // ── Versão do último save BEM-SUCEDIDO que NÓS fizemos ──
-  // Usada para suprimir ecos do realtime (quando recebemos de volta
-  // a mesma versão que acabamos de gravar, ignoramos).
   const lastSavedVersionRef=useRef(0);
-  // Flag: true enquanto um save remoto está em andamento
   const savingRef=useRef(false);
-  // Flag: true quando há mudanças locais NÃO salvas no server
-  const dirtyRef=useRef(false);
+  const pendingSaveRef=useRef(null); // fila: guarda o último estado que precisa ser salvo
 
-  // Dedupe por id (mantém o mais recente por updatedAt)
   const dedupeById=(arr)=>{
     const m=new Map();
     (arr||[]).forEach(it=>{
       if(!it||!it.id)return;
       const prev=m.get(it.id);
       if(!prev){m.set(it.id,it);return}
-      const pu=prev.updatedAt||prev.createdAt||0;
-      const nu=it.updatedAt||it.createdAt||0;
-      if(nu>=pu)m.set(it.id,it);
+      if((it.updatedAt||it.createdAt||0)>=(prev.updatedAt||prev.createdAt||0))m.set(it.id,it);
     });
     return Array.from(m.values());
   };
 
-  // Merge: combina local + novo por id. Nunca substitui cegamente.
   const mergeArr=(localArr,newArr)=>{
     if(!newArr)return localArr;
     return dedupeById([...(localArr||[]),...(newArr||[])]);
   };
 
-  // Aplica um estado recebido (remoto ou restauração) fazendo MERGE com o local
   const applyState=useCallback((d)=>{
     if(d.bookings)  setBookings(prev=>mergeArr(prev,d.bookings));
     if(d.pendencias)setPendencias(prev=>mergeArr(prev,d.pendencias));
@@ -1172,20 +1162,38 @@ export default function App(){
     if(d.logo!==undefined)setLogo(d.logo);
   },[]);
 
-  // ═══════════════════════════════════════════════════════════
-  // LOAD INICIAL — SEMPRE faz merge Supabase + localStorage
-  // Isso garante que dados salvos localmente (mas não enviados
-  // ao server, ex: por refresh rápido) nunca sejam perdidos.
-  // ═══════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════
+  // LOAD INICIAL — testa conexão + merge Supabase + localStorage
+  // ═══════════════════════════════════════════════
   useEffect(()=>{(async()=>{
-    // Sempre lê localStorage como rede de segurança
     const localData=loadLocalState();
 
     if(supabase){
+      // Testa conexão ANTES de tudo
+      const connTest=await testConnection();
+      if(!connTest.ok){
+        console.error('[LOAD] Conexão falhou:', connTest.error);
+        setDbError(connTest.error);
+        setOnline(false);
+        // Fallback: usa dados locais
+        if(localData){
+          if(localData.bookings)setBookings(dedupeById(localData.bookings));
+          if(localData.pendencias)setPendencias(dedupeById(localData.pendencias));
+          if(localData.ships)setShips(dedupeById(localData.ships));
+          if(localData.solicitacoes)setSolicitacoes(dedupeById(localData.solicitacoes));
+          if(localData.users?.length)setUsers(localData.users);
+          if(localData.armadores?.length)setArmadores(localData.armadores);
+          if(localData.logo!==undefined)setLogo(localData.logo);
+        }
+        setLoaded(true);
+        return;
+      }
+
+      setDbError(null);
       const remoteData=await loadState();
       if(remoteData) lastSavedVersionRef.current=remoteData.__version||0;
 
-      // MERGE: Supabase (fonte principal) + localStorage (rede de segurança)
+      // MERGE: Supabase + localStorage (nunca perde dados)
       const merged=mergeStates(remoteData,localData);
       if(merged&&Object.keys(merged).length>0){
         if(merged.bookings)  setBookings(dedupeById(merged.bookings));
@@ -1199,20 +1207,7 @@ export default function App(){
         if(merged.logo!==undefined)setLogo(merged.logo);
       }
       setOnline(true);
-
-      // Se o localStorage tinha dados que o Supabase não tinha,
-      // marca como dirty para forçar um save assim que o user logar
-      if(localData&&remoteData){
-        const localBkCount=(localData.bookings||[]).length;
-        const remoteBkCount=(remoteData.bookings||[]).length;
-        const localShCount=(localData.ships||[]).length;
-        const remoteShCount=(remoteData.ships||[]).length;
-        if(localBkCount>remoteBkCount||localShCount>remoteShCount){
-          dirtyRef.current=true;
-        }
-      }
     }else{
-      // Sem Supabase → usa só localStorage
       if(localData){
         if(localData.bookings)setBookings(dedupeById(localData.bookings));
         if(localData.pendencias)setPendencias(dedupeById(localData.pendencias));
@@ -1228,98 +1223,102 @@ export default function App(){
 
   const saveRef=useRef(null);
   const backupRef=useRef(0);
-  // Guarda o "hash" do último estado que disparou um save,
-  // para não re-salvar estados idênticos (eco de realtime).
-  const lastSavedHashRef=useRef("");
 
-  // Gera um hash simples para detectar se o estado realmente mudou
-  const stateHash=(s)=>{
+  // ═══════════════════════════════════════════════
+  // doSave — função que efetivamente grava no Supabase.
+  // Se outro save está rodando, ENFILEIRA (não descarta).
+  // ═══════════════════════════════════════════════
+  const doSave=useCallback(async(state,userName)=>{
+    if(!supabase||!userName)return;
+    if(savingRef.current){
+      // Outro save está rodando → enfileira este estado para salvar depois
+      pendingSaveRef.current={state,userName};
+      return;
+    }
+    savingRef.current=true;
+    setSaveStatus("saving");
     try{
-      const counts=[
-        (s.bookings||[]).length,
-        (s.pendencias||[]).length,
-        (s.ships||[]).length,
-        (s.solicitacoes||[]).length,
-      ].join(",");
-      // Inclui o updatedAt mais recente de cada coleção
-      const latest=[s.bookings,s.pendencias,s.ships,s.solicitacoes]
-        .map(arr=>(arr||[]).reduce((mx,it)=>Math.max(mx,it?.updatedAt||it?.createdAt||0),0))
-        .join(",");
-      return counts+"|"+latest;
-    }catch{return Date.now().toString()}
-  };
+      const res=await saveState(state,userName);
+      if(res&&res.ok){
+        setSaveStatus("ok");
+        setLastSavedAt(Date.now());
+        setDbError(null);
+        lastSavedVersionRef.current=res.version;
+      }else{
+        setSaveStatus("error");
+        setDbError("Falha ao salvar: "+(res?.reason||"erro desconhecido"));
+        console.warn("Save failed:",res?.reason);
+      }
+    }catch(e){
+      setSaveStatus("error");
+      setDbError("Exceção ao salvar: "+(e?.message||e));
+      console.warn("Save error",e);
+    }finally{
+      savingRef.current=false;
+      // Se tem save enfileirado, executa agora
+      const pending=pendingSaveRef.current;
+      if(pending){
+        pendingSaveRef.current=null;
+        // Executa no próximo tick para não empilhar stack
+        setTimeout(()=>doSave(pending.state,pending.userName),50);
+      }
+    }
+  },[]);
 
-  // ═══════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════
   // SAVE — dispara quando qualquer dado muda.
-  // Estratégia anti-eco:
-  //   1. Calcula um "hash" do estado (contagem + timestamps)
-  //   2. Se o hash é igual ao último save, pula (nada mudou de fato)
-  //   3. Após save bem-sucedido, NÃO aplica resposta de volta
-  //      (o estado local JÁ tem tudo; o realtime cuida de trazer
-  //      dados de OUTROS clientes)
-  // ═══════════════════════════════════════════════════════════
+  // INCLUI `user` nos deps para salvar ao logar.
+  // ═══════════════════════════════════════════════
   useEffect(()=>{
     if(!loaded)return;
-    const cleanBookings=dedupeById(bookings);
-    const cleanPendencias=dedupeById(pendencias);
-    const cleanShips=dedupeById(ships);
-    const cleanSolicitacoes=dedupeById(solicitacoes);
-    const state={bookings:cleanBookings,pendencias:cleanPendencias,ships:cleanShips,solicitacoes:cleanSolicitacoes,users,armadores,logo};
+    const state={
+      bookings:dedupeById(bookings),
+      pendencias:dedupeById(pendencias),
+      ships:dedupeById(ships),
+      solicitacoes:dedupeById(solicitacoes),
+      users,armadores,logo
+    };
 
-    // Salvamento local IMEDIATO (nunca perde dados mesmo se fechar o browser)
+    // SEMPRE salva localmente de imediato
     saveLocalState(state);
 
-    // Backup rotativo a cada 2 min de atividade
+    // Backup rotativo a cada 2 min
     if(Date.now()-backupRef.current>120000){
       backupRef.current=Date.now();
       pushLocalBackup(state);
     }
 
-    // Verifica se o estado realmente mudou (evita eco de realtime)
-    const hash=stateHash(state);
-    if(hash===lastSavedHashRef.current&&!dirtyRef.current)return;
-
-    // Salvamento remoto com debounce
-    if(supabase&&user){
-      setSaveStatus("saving");
+    // Salvamento remoto com debounce de 600ms
+    if(supabase&&user&&!dbError){
       if(saveRef.current)clearTimeout(saveRef.current);
-      saveRef.current=setTimeout(async()=>{
-        if(savingRef.current)return; // save anterior ainda rodando
-        savingRef.current=true;
-        try{
-          const res=await saveState(state,user.name);
-          if(res&&res.ok){
-            setSaveStatus("ok");
-            setLastSavedAt(Date.now());
-            lastSavedVersionRef.current=res.version;
-            lastSavedHashRef.current=stateHash(state);
-            dirtyRef.current=false;
-          }else{
-            setSaveStatus("error");
-            dirtyRef.current=true; // marca como dirty para tentar de novo
-            console.warn("Supabase save failed:",res?.reason);
-          }
-        }catch(e){
-          setSaveStatus("error");
-          dirtyRef.current=true;
-          console.warn("Save error",e);
-        }finally{
-          savingRef.current=false;
-        }
-      },600);
+      saveRef.current=setTimeout(()=>doSave(state,user.name),600);
     }
-  },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded]);
+  },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded,user,dbError,doSave]);
 
-  // ═══════════════════════════════════════════════════════════
-  // REALTIME — recebe atualizações de outros clientes.
-  // Suprime ecos: se a versão recebida é a mesma que NÓS acabamos
-  // de gravar, ignora (já temos esses dados).
-  // ═══════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════
+  // SYNC PERIÓDICO — rede de segurança a cada 30s.
+  // Re-lê do Supabase e mescla, garantindo que nenhum
+  // dado se perca mesmo se o realtime falhar.
+  // ═══════════════════════════════════════════════
+  useEffect(()=>{
+    if(!supabase||!loaded)return;
+    const iv=setInterval(async()=>{
+      try{
+        const d=await loadState();
+        if(d){
+          lastSavedVersionRef.current=Math.max(lastSavedVersionRef.current,d.__version||0);
+          applyState(d);
+        }
+      }catch(e){console.warn("Periodic sync error",e)}
+    },30000);
+    return()=>clearInterval(iv);
+  },[loaded,applyState]);
+
+  // REALTIME
   useEffect(()=>{
     if(!supabase)return;
     const unsub=subscribeToChanges((newData,version)=>{
       try{
-        // Se a versão é <= a última que nós salvamos, é eco nosso → ignora
         if(version&&version<=lastSavedVersionRef.current)return;
         applyState(newData);
       }catch(e){console.warn("Apply state error",e)}
@@ -1330,9 +1329,9 @@ export default function App(){
   // Alerta ao sair com dados não salvos
   useEffect(()=>{
     const handler=(e)=>{
-      if(dirtyRef.current){
+      if(savingRef.current||pendingSaveRef.current){
         e.preventDefault();
-        e.returnValue="Existem dados não salvos. Deseja sair?";
+        e.returnValue="Salvamento em andamento. Deseja sair?";
       }
     };
     window.addEventListener("beforeunload",handler);
@@ -1407,7 +1406,16 @@ export default function App(){
 
   const refresh=async()=>{
     setRefreshing(true);
-    if(supabase){const d=await loadState();if(d)applyState(d)}
+    if(supabase){
+      const ct=await testConnection();
+      if(ct.ok){
+        setDbError(null);setOnline(true);
+        const d=await loadState();
+        if(d){lastSavedVersionRef.current=Math.max(lastSavedVersionRef.current,d.__version||0);applyState(d)}
+      }else{
+        setDbError(ct.error);setOnline(false);
+      }
+    }
     setTimeout(()=>setRefreshing(false),500);
   };
 
@@ -1421,7 +1429,7 @@ export default function App(){
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           {logo?<img src={logo} alt="Logo" style={{maxHeight:36,maxWidth:140}} onClick={()=>setShowLogo(true)}/>:
           <div onClick={()=>setShowLogo(true)} style={{width:36,height:36,borderRadius:9,background:BRAND,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer"}}><span>IS</span></div>}
-          <div><h1 style={{fontSize:14,fontWeight:700,color:BRAND}}>Inter Shipping</h1><p style={{fontSize:9,color:"#94A3B8"}}>Booking Control{online?" · 🟢 Online":" · 🟡 Local"}</p></div>
+          <div><h1 style={{fontSize:14,fontWeight:700,color:BRAND}}>Inter Shipping</h1><p style={{fontSize:9,color:dbError?"#DC2626":online?"#94A3B8":"#B45309"}}>{dbError?"🔴 ERRO NO BANCO":online?"Booking Control · 🟢 Online":"Booking Control · 🟡 Local"}</p></div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <div style={{display:"flex",alignItems:"center",gap:4,padding:"4px 8px",borderRadius:6,background:saveStatus==="error"?"#FEF2F2":saveStatus==="saving"?"#FEF3C7":"#F0FDF4",border:`1px solid ${saveStatus==="error"?"#FECACA":saveStatus==="saving"?"#FDE68A":"#BBF7D0"}`,fontSize:9,fontWeight:600,color:saveStatus==="error"?"#DC2626":saveStatus==="saving"?"#B45309":"#047857"}} title={lastSavedAt?`Último salvamento: ${new Date(lastSavedAt).toLocaleTimeString("pt-BR")}`:"Aguardando alterações"}>
@@ -1439,6 +1447,12 @@ export default function App(){
           <button onClick={()=>setUser(null)} style={{padding:"4px 10px",borderRadius:5,border:"1px solid #E2E8F0",background:"#fff",color:"#94A3B8",fontSize:9,cursor:"pointer"}}>Sair</button>
         </div>
       </header>
+      {dbError&&<div style={{padding:"10px 24px",background:"#FEF2F2",borderBottom:"2px solid #DC2626",animation:"slideIn .3s"}}>
+        <p style={{color:"#DC2626",fontSize:12,fontWeight:700}}>🚨 ERRO DE CONEXÃO COM O BANCO DE DADOS</p>
+        <p style={{color:"#991B1B",fontSize:11,marginTop:4}}>{dbError}</p>
+        <p style={{color:"#B91C1C",fontSize:10,marginTop:4}}>⚠ Os dados estão sendo salvos APENAS localmente neste navegador. Outros usuários NÃO verão suas alterações.</p>
+        <button onClick={refresh} style={{marginTop:6,padding:"4px 12px",borderRadius:6,border:"1px solid #DC2626",background:"#fff",color:"#DC2626",fontSize:10,fontWeight:600,cursor:"pointer"}}>🔄 Tentar reconectar</button>
+      </div>}
       <div style={{padding:"12px 24px 0",background:"#fff",borderBottom:"1px solid #E2E8F0",display:"flex",gap:4}}>
         {TABS.map(t=>{const a=tab===t.id;return(<button key={t.id} onClick={()=>setTab(t.id)} style={{padding:"10px 20px",borderRadius:"8px 8px 0 0",border:a?`2px solid ${t.c}`:"2px solid transparent",borderBottom:a?"2px solid #fff":"2px solid transparent",background:a?t.bg:"transparent",color:a?t.c:"#94A3B8",fontSize:12,fontWeight:a?700:500,cursor:"pointer",fontFamily:"inherit",marginBottom:"-1px",display:"flex",alignItems:"center",gap:6}}><span>{t.icon}</span>{t.label}</button>)})}
       </div>
@@ -1457,7 +1471,6 @@ export default function App(){
         if(!window.confirm("Restaurar este backup? O estado atual será substituído (uma cópia de segurança do estado atual é feita automaticamente)."))return;
         // Salva snapshot do estado atual antes de restaurar
         pushLocalBackup({bookings,pendencias,ships,solicitacoes,users,armadores,logo});
-        dirtyRef.current=true; // força save ao server
         if(s.bookings)setBookings(dedupeById(s.bookings));
         if(s.pendencias)setPendencias(dedupeById(s.pendencias));
         if(s.ships)setShips(dedupeById(s.ships));
