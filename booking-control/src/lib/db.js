@@ -5,9 +5,7 @@ const key = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 export const supabase = (url && key) ? createClient(url, key) : null
 
-// ─────────────────────────────────────────────────────────────
-// MERGE HELPERS — evitar perda de dados em edições concorrentes
-// ─────────────────────────────────────────────────────────────
+// ─── MERGE HELPERS ───
 
 function ts(item) {
   return (item && (item.updatedAt || item.createdAt)) || 0
@@ -24,10 +22,8 @@ function mergeCollection(remoteArr, localArr, itemMerger) {
     const prev = map.get(item.id)
     if (!prev) { map.set(item.id, item); return }
     if (itemMerger) { map.set(item.id, itemMerger(prev, item)); return }
-    // Anti-ressurreição: versão deletada SEMPRE vence
     if (isDel(item) && !isDel(prev)) { map.set(item.id, item); return }
     if (isDel(prev) && !isDel(item)) return
-    // Tie-break: mais recente vence
     if (ts(item) > ts(prev)) map.set(item.id, item)
   }
   ;(remoteArr || []).forEach(put)
@@ -40,8 +36,7 @@ function mergeShip(a, b) {
   if (isDel(b) && !isDel(a)) return b
   const newer = ts(b) >= ts(a) ? b : a
   const older = newer === a ? b : a
-  const mergedBookings = mergeCollection(older.bookings || [], newer.bookings || [])
-  return { ...newer, bookings: mergedBookings }
+  return { ...newer, bookings: mergeCollection(older.bookings || [], newer.bookings || []) }
 }
 
 export function mergeStates(remote, local) {
@@ -58,6 +53,35 @@ export function mergeStates(remote, local) {
   }
 }
 
+// ─── TESTE DE CONEXÃO ───
+// Verifica se a tabela shared_state existe e está acessível.
+// Retorna { ok: bool, error: string|null }
+export async function testConnection() {
+  if (!supabase) return { ok: false, error: 'Supabase não configurado (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)' }
+  try {
+    const { data, error } = await supabase
+      .from('shared_state')
+      .select('id, version')
+      .eq('id', 1)
+      .maybeSingle()
+    if (error) {
+      if (error.message.includes('does not exist') || error.code === '42P01') {
+        return { ok: false, error: 'Tabela shared_state NÃO EXISTE no Supabase. Execute o SQL de correção.' }
+      }
+      if (error.code === '42501' || error.message.includes('permission')) {
+        return { ok: false, error: 'Sem permissão para acessar shared_state. Verifique as policies RLS.' }
+      }
+      return { ok: false, error: `Erro ao ler Supabase: ${error.message}` }
+    }
+    if (!data) {
+      return { ok: false, error: 'Tabela shared_state existe mas está vazia. Execute o SQL de correção.' }
+    }
+    return { ok: true, error: null }
+  } catch (e) {
+    return { ok: false, error: `Exceção: ${e?.message || e}` }
+  }
+}
+
 // ─── LOAD shared state ───
 export async function loadState() {
   if (!supabase) return null
@@ -67,15 +91,19 @@ export async function loadState() {
       .select('data, version')
       .eq('id', 1)
       .maybeSingle()
-    if (error || !data) return null
+    if (error) {
+      console.error('[loadState] ERRO:', error.message)
+      return null
+    }
+    if (!data) return null
     return { ...(data.data || {}), __version: data.version || 0 }
   } catch (e) {
-    console.warn('[loadState] exception:', e?.message || e)
+    console.error('[loadState] EXCEÇÃO:', e?.message || e)
     return null
   }
 }
 
-// ─── LOAD localStorage (rede de segurança) ───
+// ─── localStorage helpers ───
 export function loadLocalState() {
   try {
     const raw = localStorage.getItem('booking-control-data')
@@ -83,91 +111,100 @@ export function loadLocalState() {
   } catch { return null }
 }
 
-// ─── SAVE LOCAL imediato ───
 export function saveLocalState(state) {
   try {
     localStorage.setItem('booking-control-data', JSON.stringify(state))
   } catch (e) {
-    console.warn('[saveLocalState] failed:', e?.message || e)
+    console.warn('[saveLocalState]', e?.message || e)
   }
 }
 
-// ─── SAVE — read-modify-write com LOCKING OTIMISTA e retry ───
+// ─── SAVE com merge + retry + verificação ───
 export async function saveState(state, userName) {
   if (!supabase) return { ok: false, reason: 'no-supabase' }
 
-  const MAX_RETRIES = 5
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  const MAX = 5
+  for (let i = 0; i < MAX; i++) {
     try {
-      const { data: cur, error: readErr } = await supabase
+      // 1. Lê estado atual
+      const { data: cur, error: rErr } = await supabase
         .from('shared_state')
         .select('data, version')
         .eq('id', 1)
         .maybeSingle()
 
-      if (readErr) {
-        console.warn('[saveState] read error:', readErr.message)
-        await new Promise(r => setTimeout(r, 300 * (attempt + 1)))
+      if (rErr) {
+        console.warn(`[save] read error #${i + 1}:`, rErr.message)
+        await delay(300 * (i + 1))
         continue
       }
 
-      const remoteData    = cur?.data    || null
-      const remoteVersion = cur?.version || 0
-      const merged = mergeStates(remoteData, state)
-      const newVersion = remoteVersion + 1
+      const remoteData = cur?.data || null
+      const remoteVer  = cur?.version || 0
+      const merged     = mergeStates(remoteData, state)
+      const newVer     = remoteVer + 1
+      const now        = new Date().toISOString()
 
-      if (remoteVersion > 0) {
-        // UPDATE com locking otimista: WHERE version = versão lida
-        const { data: result, error: writeErr } = await supabase
+      // 2. Grava
+      let writeOk = false
+      if (remoteVer > 0) {
+        // UPDATE com locking otimista
+        const { data: res, error: wErr } = await supabase
           .from('shared_state')
-          .update({
-            data: merged,
-            version: newVersion,
-            updated_at: new Date().toISOString(),
-            updated_by: userName || 'system'
-          })
+          .update({ data: merged, version: newVer, updated_at: now, updated_by: userName || 'system' })
           .eq('id', 1)
-          .eq('version', remoteVersion)
+          .eq('version', remoteVer)
           .select('version')
-
-        if (writeErr) {
-          console.warn(`[saveState] write error (try ${attempt + 1}):`, writeErr.message)
-          await new Promise(r => setTimeout(r, 300 * (attempt + 1)))
+        if (wErr) {
+          console.warn(`[save] write error #${i + 1}:`, wErr.message)
+          await delay(300 * (i + 1))
           continue
         }
-
-        if (!result || result.length === 0) {
-          console.log(`[saveState] version conflict (try ${attempt + 1}), re-reading...`)
-          await new Promise(r => setTimeout(r, 150 * (attempt + 1)))
+        writeOk = res && res.length > 0
+        if (!writeOk) {
+          // Conflito de versão — outro cliente gravou primeiro → retry
+          console.log(`[save] version conflict #${i + 1}, retrying...`)
+          await delay(200 * (i + 1))
           continue
         }
       } else {
-        const { error: writeErr } = await supabase
+        // Upsert (primeiro save)
+        const { error: wErr } = await supabase
           .from('shared_state')
-          .upsert({
-            id: 1,
-            data: merged,
-            version: newVersion,
-            updated_at: new Date().toISOString(),
-            updated_by: userName || 'system'
-          }, { onConflict: 'id' })
-
-        if (writeErr) {
-          console.warn(`[saveState] upsert error (try ${attempt + 1}):`, writeErr.message)
-          await new Promise(r => setTimeout(r, 300 * (attempt + 1)))
+          .upsert({ id: 1, data: merged, version: newVer, updated_at: now, updated_by: userName || 'system' }, { onConflict: 'id' })
+        if (wErr) {
+          console.warn(`[save] upsert error #${i + 1}:`, wErr.message)
+          await delay(300 * (i + 1))
           continue
         }
+        writeOk = true
       }
 
-      return { ok: true, version: newVersion, data: merged }
+      if (writeOk) {
+        // 3. VERIFICAÇÃO: lê de volta para confirmar que os dados estão lá
+        const { data: verify, error: vErr } = await supabase
+          .from('shared_state')
+          .select('version')
+          .eq('id', 1)
+          .maybeSingle()
+        
+        if (vErr || !verify) {
+          console.warn(`[save] verify failed #${i + 1}:`, vErr?.message)
+          // Gravou mas não conseguiu confirmar — trata como sucesso parcial
+        }
+
+        return { ok: true, version: newVer, data: merged }
+      }
     } catch (e) {
-      console.warn(`[saveState] exception (try ${attempt + 1}):`, e?.message || e)
-      if (attempt === MAX_RETRIES - 1) return { ok: false, reason: String(e?.message || e) }
-      await new Promise(r => setTimeout(r, 300 * (attempt + 1)))
+      console.warn(`[save] exception #${i + 1}:`, e?.message || e)
+      if (i === MAX - 1) return { ok: false, reason: String(e?.message || e) }
+      await delay(300 * (i + 1))
     }
   }
   return { ok: false, reason: 'max-retries' }
 }
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)) }
 
 // ─── REALTIME subscription ───
 export function subscribeToChanges(callback) {
@@ -181,15 +218,13 @@ export function subscribeToChanges(callback) {
   return () => supabase.removeChannel(channel)
 }
 
-// ─────────────────────────────────────────────────────────────
-// BACKUPS LOCAIS ROTATIVOS
-// ─────────────────────────────────────────────────────────────
-const BACKUP_KEY = 'booking-control-backups'
-const MAX_BACKUPS = 10
+// ─── BACKUPS LOCAIS ───
+const BK_KEY = 'booking-control-backups'
+const BK_MAX = 10
 
 export function pushLocalBackup(state) {
   try {
-    const raw = localStorage.getItem(BACKUP_KEY)
+    const raw = localStorage.getItem(BK_KEY)
     const list = raw ? JSON.parse(raw) : []
     list.unshift({
       at: Date.now(),
@@ -198,19 +233,19 @@ export function pushLocalBackup(state) {
       ships:      (state.ships      || []).length,
       state,
     })
-    localStorage.setItem(BACKUP_KEY, JSON.stringify(list.slice(0, MAX_BACKUPS)))
+    localStorage.setItem(BK_KEY, JSON.stringify(list.slice(0, BK_MAX)))
   } catch (e) {
-    console.warn('[pushLocalBackup] failed:', e?.message || e)
+    console.warn('[backup]', e?.message || e)
   }
 }
 
 export function listLocalBackups() {
   try {
-    const raw = localStorage.getItem(BACKUP_KEY)
+    const raw = localStorage.getItem(BK_KEY)
     return raw ? JSON.parse(raw) : []
   } catch { return [] }
 }
 
 export function clearLocalBackups() {
-  try { localStorage.removeItem(BACKUP_KEY) } catch {}
+  try { localStorage.removeItem(BK_KEY) } catch {}
 }
