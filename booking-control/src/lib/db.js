@@ -119,7 +119,7 @@ export async function testConnection() {
       return { ok: false, error: 'Verificação pós-escrita falhou: ' + (verifyErr?.message || 'sem dados') }
     }
 
-    if (verifyData.updated_at !== testTs) {
+    if (new Date(verifyData.updated_at).getTime() !== new Date(testTs).getTime()) {
       log('❌ ESCRITA NÃO PERSISTIU! Gravou "' + testTs + '" mas leu "' + verifyData.updated_at + '"')
       return { ok: false, error: 'DADOS NÃO PERSISTEM no Supabase! Escreveu mas ao ler voltou diferente. Verifique triggers, policies e limites do plano.' }
     }
