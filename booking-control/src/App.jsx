@@ -322,12 +322,44 @@ function BookingDetail({req,onClose,onChangeStatus,onUpdate,onDelete,user}){
   </Modal>);
 }
 
-function PendenciaModal({onClose,onSave,initial}){
-  const[bn,setBn]=useState(initial?.bookingNumber||"");const[obs,setObs]=useState(initial?.observation||"");
+function PendenciaModal({onClose,onSave,initial,armadores=[]}){
+  const arms=(armadores||[]).map(a=>a.name);
+  const[bn,setBn]=useState(initial?.bookingNumber||"");
+  const[obs,setObs]=useState(initial?.observation||"");
+  const[armador,setArmador]=useState(initial?.armador||arms[0]||"");
+  const[prioridade,setPrioridade]=useState(initial?.prioridade||"importante");
+  const PRIO=[
+    {value:"urgente",label:"🔴 Urgente",desc:"Ação imediata necessária",color:"#DC2626",bg:"#FEF2F2",border:"#FECACA"},
+    {value:"importante",label:"🟠 Importante",desc:"Resolver no dia",color:"#B45309",bg:"#FEF3C7",border:"#FDE68A"},
+    {value:"com_tempo",label:"🔵 Com Tempo",desc:"Pode esperar",color:"#2563EB",bg:"#EFF6FF",border:"#BFDBFE"},
+  ];
+  const selPrio=PRIO.find(p=>p.value===prioridade)||PRIO[1];
   return(<Modal onClose={onClose}><h2 style={{color:"#B45309",fontSize:16,fontWeight:700,marginBottom:16}}>{initial?"Editar":"Nova"} Pendência</h2>
-    <div style={{marginBottom:12}}><label style={lS}>Nº do Booking *</label><input value={bn} onChange={e=>setBn(e.target.value)} style={iS}/></div>
-    <div style={{marginBottom:16}}><label style={lS}>O que está pendente? *</label><textarea value={obs} onChange={e=>setObs(e.target.value)} rows={3} style={{...iS,resize:"vertical"}}/></div>
-    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button><button onClick={()=>{if(bn&&obs)onSave({bookingNumber:bn,observation:obs})}} style={{...bP,background:"#B45309",opacity:bn&&obs?1:.5}}>Adicionar</button></div>
+    <div style={{marginBottom:12}}><label style={lS}>Nº do Booking *</label><input value={bn} onChange={e=>setBn(e.target.value)} placeholder="Ex: BK-123456" style={iS}/></div>
+    <div style={{marginBottom:12}}><label style={lS}>Armador</label>
+      <select value={armador} onChange={e=>setArmador(e.target.value)} style={selS}>
+        <option value="">— Selecionar —</option>
+        {arms.map(a=><option key={a} value={a}>{a}</option>)}
+      </select>
+    </div>
+    <div style={{marginBottom:12}}><label style={lS}>Prioridade *</label>
+      <div style={{display:"flex",gap:6}}>
+        {PRIO.map(p=><button key={p.value} onClick={()=>setPrioridade(p.value)} style={{
+          flex:1,padding:"10px 8px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",textAlign:"center",
+          border:`2px solid ${prioridade===p.value?p.color:p.border}`,
+          background:prioridade===p.value?p.bg:"#fff",
+          boxShadow:prioridade===p.value?`0 0 0 1px ${p.color}`:"none",
+          transition:"all .15s"
+        }}>
+          <p style={{fontSize:13,fontWeight:700,color:p.color}}>{p.label}</p>
+          <p style={{fontSize:9,color:p.color,opacity:.7,marginTop:2}}>{p.desc}</p>
+        </button>)}
+      </div>
+    </div>
+    <div style={{marginBottom:16}}><label style={lS}>O que está pendente? *</label><textarea value={obs} onChange={e=>setObs(e.target.value)} rows={3} placeholder="Descreva a pendência..." style={{...iS,resize:"vertical"}}/></div>
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><button onClick={onClose} style={bG}>Cancelar</button>
+      <button onClick={()=>{if(bn&&obs)onSave({bookingNumber:bn,observation:obs,armador,prioridade,updatedAt:Date.now()})}} style={{...bP,background:selPrio.color,opacity:bn&&obs?1:.5}}>{initial?"Salvar":"Adicionar"}</button>
+    </div>
   </Modal>);
 }
 
@@ -637,36 +669,167 @@ function BookingsPanel({data,setData,armadores,user}){
   </div>);
 }
 
-function PendenciasPanel({data,setData,user}){
+function PendenciasPanel({data,setData,user,armadores=[]}){
   const[showNew,setShowNew]=useState(false);const[editP,setEditP]=useState(null);const[selP,setSelP]=useState(null);const[cmt,setCmt]=useState("");
   const[tick,setTick]=useState(0);
+  const[filtPrio,setFiltPrio]=useState("todos"); // todos | urgente | importante | com_tempo
+  const[filtArm,setFiltArm]=useState("todos");
   useEffect(()=>{const i=setInterval(()=>setTick(t=>t+1),30000);return()=>clearInterval(i)},[]);
-  // Sem auto-purge! Pendências resolvidas >1h são apenas OCULTADAS na UI.
+
   const pending=A(data).filter(d=>!d.resolved&&!d._deleted);
   const resolved=A(data).filter(d=>d.resolved&&!d._deleted&&d.resolvedAt&&(Date.now()-d.resolvedAt)<=ONE_HOUR);
-  const fmtRemaining=(resolvedAt)=>{if(!resolvedAt)return"";const left=Math.max(0,ONE_HOUR-(Date.now()-resolvedAt));const m=Math.ceil(left/60000);return m>0?`${m}min restante${m>1?"s":""}`:""};
+  const fmtRemaining=(resolvedAt)=>{if(!resolvedAt)return"";const left=Math.max(0,ONE_HOUR-(Date.now()-resolvedAt));const m=Math.ceil(left/60000);return m>0?`${m}min`:""};
+
+  // Prioridades
+  const PRIO_ORDER={urgente:0,importante:1,com_tempo:2};
+  const PRIO_CFG={
+    urgente:{label:"Urgente",icon:"🔴",color:"#DC2626",bg:"#FEF2F2",border:"#FECACA",barColor:"#EF4444"},
+    importante:{label:"Importante",icon:"🟠",color:"#B45309",bg:"#FEF3C7",border:"#FDE68A",barColor:"#F59E0B"},
+    com_tempo:{label:"Com Tempo",icon:"🔵",color:"#2563EB",bg:"#EFF6FF",border:"#BFDBFE",barColor:"#3B82F6"},
+  };
+  const getPrio=(p)=>PRIO_CFG[p?.prioridade]||PRIO_CFG.importante;
+
+  // Contadores por prioridade
+  const countUrgente=pending.filter(p=>(p.prioridade||"importante")==="urgente").length;
+  const countImportante=pending.filter(p=>(p.prioridade||"importante")==="importante").length;
+  const countComTempo=pending.filter(p=>(p.prioridade||"importante")==="com_tempo").length;
+
+  // Filtrar
+  let filtered=pending;
+  if(filtPrio!=="todos")filtered=filtered.filter(p=>(p.prioridade||"importante")===filtPrio);
+  if(filtArm!=="todos")filtered=filtered.filter(p=>p.armador===filtArm);
+
+  // Ordenar: urgente → importante → com_tempo, dentro de cada: mais antigo primeiro
+  filtered=[...filtered].sort((a,b)=>{
+    const pa=PRIO_ORDER[a.prioridade||"importante"]??1;
+    const pb=PRIO_ORDER[b.prioridade||"importante"]??1;
+    if(pa!==pb)return pa-pb;
+    return(a.createdAt||0)-(b.createdAt||0);
+  });
+
+  // Agrupar por armador
+  const arms=[...new Set(filtered.map(p=>p.armador||"Sem armador"))].sort();
+  const grouped=arms.map(arm=>({arm,items:filtered.filter(p=>(p.armador||"Sem armador")===arm)}));
+
+  // Armadores únicos para filtro
+  const allArms=[...new Set(pending.map(p=>p.armador).filter(Boolean))].sort();
+
+  const renderPrioTag=(p)=>{
+    const cfg=getPrio(p);
+    return <span style={{display:"inline-flex",alignItems:"center",gap:3,padding:"2px 8px",borderRadius:20,background:cfg.bg,border:`1px solid ${cfg.border}`,fontSize:9,fontWeight:700,color:cfg.color}}>{cfg.icon} {cfg.label}</span>;
+  };
+
+  const renderItem=(p)=>{
+    const cfg=getPrio(p);
+    return(
+    <div key={p.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9",borderLeft:`4px solid ${cfg.barColor}`,transition:"background .15s"}} onMouseEnter={e=>e.currentTarget.style.background="#FAFBFC"} onMouseLeave={e=>e.currentTarget.style.background=""}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+            {renderPrioTag(p)}
+            {p.armador&&<span style={{fontSize:9,fontWeight:600,color:"#64748B",background:"#F1F5F9",padding:"2px 8px",borderRadius:20}}>⚓ {p.armador}</span>}
+          </div>
+          <p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:cfg.color}}>{p.bookingNumber}</span></p>
+          <p style={{fontSize:12,color:"#475569",marginTop:3,lineHeight:1.4}}>{p.observation}</p>
+          <p style={{fontSize:9,color:"#94A3B8",marginTop:4}}>{p.createdBy} · {fDt(p.createdAt)}</p>
+          {A(p.comments).map((c,i)=><div key={i} style={{padding:"5px 10px",borderRadius:6,background:"#FFFBEB",marginTop:4,borderLeft:"3px solid #FDE68A"}}>
+            <p style={{fontSize:11,color:"#1E293B"}}>{c.text}</p>
+            <p style={{fontSize:8,color:"#94A3B8",marginTop:1}}>{c.by} · {fDt(c.at)}</p>
+          </div>)}
+          {selP===p.id&&<div style={{display:"flex",gap:4,marginTop:6}}>
+            <input value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="Comentário..." style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter"&&cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}],updatedAt:Date.now()}:x));setCmt("")}}}/>
+            <button onClick={()=>{if(cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}],updatedAt:Date.now()}:x));setCmt("")}}} style={{...bP,padding:"5px 10px",fontSize:10}}>+</button>
+          </div>}
+        </div>
+        <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
+          <button onClick={()=>setSelP(selP===p.id?null:p.id)} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Comentar">💬</button>
+          <button onClick={()=>setEditP(p)} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #E2E8F0",background:"#fff",color:BRAND,fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Editar">✏️</button>
+          <button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:true,resolvedAt:Date.now(),resolvedBy:user.name,updatedAt:Date.now()}:x))} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}} title="Resolver">✓</button>
+          <button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true,updatedAt:Date.now()}:x))}} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Excluir">🗑</button>
+        </div>
+      </div>
+    </div>);
+  };
+
   return(<div>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-      <div style={{display:"flex",gap:12}}>
-        <div style={{padding:"12px 20px",borderRadius:10,background:"#FEF3C7",border:"1px solid #FDE68A",textAlign:"center"}}><p style={{fontSize:22,fontWeight:700,color:"#B45309"}}>{pending.length}</p><p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#92400E"}}>Pendentes</p></div>
-        <div style={{padding:"12px 20px",borderRadius:10,background:"#D1FAE5",border:"1px solid #A7F3D0",textAlign:"center"}}><p style={{fontSize:22,fontWeight:700,color:"#047857"}}>{resolved.length}</p><p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#065F46"}}>Resolvidas</p></div>
+    {/* HEADER — contadores por prioridade */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button onClick={()=>setFiltPrio("todos")} style={{padding:"10px 16px",borderRadius:10,border:filtPrio==="todos"?"2px solid #B45309":"1px solid #E2E8F0",background:filtPrio==="todos"?"#FEF3C7":"#fff",textAlign:"center",cursor:"pointer",fontFamily:"inherit",transition:"all .15s"}}>
+          <p style={{fontSize:20,fontWeight:700,color:"#B45309"}}>{pending.length}</p>
+          <p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#92400E"}}>Total</p>
+        </button>
+        <button onClick={()=>setFiltPrio(filtPrio==="urgente"?"todos":"urgente")} style={{padding:"10px 16px",borderRadius:10,border:filtPrio==="urgente"?"2px solid #DC2626":"1px solid #FECACA",background:filtPrio==="urgente"?"#FEF2F2":"#fff",textAlign:"center",cursor:"pointer",fontFamily:"inherit",transition:"all .15s",opacity:countUrgente?1:.5}}>
+          <p style={{fontSize:20,fontWeight:700,color:"#DC2626"}}>{countUrgente}</p>
+          <p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#DC2626"}}>🔴 Urgentes</p>
+        </button>
+        <button onClick={()=>setFiltPrio(filtPrio==="importante"?"todos":"importante")} style={{padding:"10px 16px",borderRadius:10,border:filtPrio==="importante"?"2px solid #B45309":"1px solid #FDE68A",background:filtPrio==="importante"?"#FEF3C7":"#fff",textAlign:"center",cursor:"pointer",fontFamily:"inherit",transition:"all .15s",opacity:countImportante?1:.5}}>
+          <p style={{fontSize:20,fontWeight:700,color:"#B45309"}}>{countImportante}</p>
+          <p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#B45309"}}>🟠 Importantes</p>
+        </button>
+        <button onClick={()=>setFiltPrio(filtPrio==="com_tempo"?"todos":"com_tempo")} style={{padding:"10px 16px",borderRadius:10,border:filtPrio==="com_tempo"?"2px solid #2563EB":"1px solid #BFDBFE",background:filtPrio==="com_tempo"?"#EFF6FF":"#fff",textAlign:"center",cursor:"pointer",fontFamily:"inherit",transition:"all .15s",opacity:countComTempo?1:.5}}>
+          <p style={{fontSize:20,fontWeight:700,color:"#2563EB"}}>{countComTempo}</p>
+          <p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#2563EB"}}>🔵 Com Tempo</p>
+        </button>
+        <div style={{padding:"10px 16px",borderRadius:10,background:"#D1FAE5",border:"1px solid #A7F3D0",textAlign:"center"}}>
+          <p style={{fontSize:20,fontWeight:700,color:"#047857"}}>{resolved.length}</p>
+          <p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#065F46"}}>✅ Resolvidas</p>
+        </div>
       </div>
-      <button onClick={()=>setShowNew(true)} style={{...bP,background:"#B45309",padding:"8px 16px",fontSize:11}}>+ Pendência</button>
+      <button onClick={()=>setShowNew(true)} style={{...bP,background:"#B45309",padding:"10px 20px",fontSize:12}}>+ Nova Pendência</button>
     </div>
-    {/* Notification for recently resolved */}
-    {resolved.length>0&&<div style={{padding:"10px 14px",borderRadius:10,background:"#D1FAE5",border:"1px solid #A7F3D0",marginBottom:10,animation:"slideIn .4s"}}><p style={{color:"#047857",fontWeight:700,fontSize:12}}>✅ {resolved.length} pendência(s) resolvida(s) — serão removidas automaticamente em até 1h</p></div>}
-    <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>
-      {pending.map(p=><div key={p.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1}}><p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:"#B45309"}}>{p.bookingNumber}</span></p><p style={{fontSize:12,color:"#64748B",marginTop:2}}>{p.observation}</p><p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>{p.createdBy} · {fDt(p.createdAt)}</p>{A(p.comments).map((c,i)=><div key={i} style={{padding:"4px 8px",borderRadius:4,background:"#FFFBEB",marginTop:3}}><p style={{fontSize:11}}>{c.text}</p><p style={{fontSize:8,color:"#94A3B8"}}>{c.by} · {fDt(c.at)}</p></div>)}{selP===p.id&&<div style={{display:"flex",gap:4,marginTop:6}}><input value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="Comentário..." style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter"&&cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}]}:x));setCmt("")}}}/><button onClick={()=>{if(cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}]}:x));setCmt("")}}} style={{...bP,padding:"5px 10px",fontSize:10}}>+</button></div>}</div><div style={{display:"flex",gap:4,marginLeft:8}}><button onClick={()=>setSelP(selP===p.id?null:p.id)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>💬</button><button onClick={()=>setEditP(p)} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #E2E8F0",background:"#fff",color:BRAND,fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>✏️</button><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:true,resolvedAt:Date.now(),resolvedBy:user.name}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✓</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div></div></div>)}
-      {!pending.length&&<div style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma pendência</div>}
-    </div>
-    {resolved.length>0&&<div style={{marginTop:12}}><p style={{...lS,marginBottom:6}}>Resolvidas (auto-exclusão em 1h)</p><div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>{resolved.map(p=>{const rem=fmtRemaining(p.resolvedAt);return(<div key={p.id} style={{padding:"10px 16px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",opacity:.7}}>
-      <div><p style={{fontSize:12,fontWeight:600}}>✓ BKG: {p.bookingNumber}</p><p style={{fontSize:11,color:"#64748B"}}>{p.observation}</p>
-        <p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>Resolvido por {p.resolvedBy||"—"} · {p.resolvedAt?fDt(p.resolvedAt):""}{rem?` · ⏱ ${rem}`:""}</p>
+
+    {/* FILTRO por armador */}
+    {allArms.length>0&&<div style={{display:"flex",gap:4,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+      <span style={{fontSize:10,fontWeight:600,color:"#94A3B8",textTransform:"uppercase"}}>Armador:</span>
+      <button onClick={()=>setFiltArm("todos")} style={{padding:"4px 12px",borderRadius:20,border:filtArm==="todos"?"2px solid #0F766E":"1px solid #E2E8F0",background:filtArm==="todos"?"#F0FDFA":"#fff",color:filtArm==="todos"?"#0F766E":"#94A3B8",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Todos</button>
+      {allArms.map(a=>{const cnt=pending.filter(p=>p.armador===a).length;return(
+        <button key={a} onClick={()=>setFiltArm(filtArm===a?"todos":a)} style={{padding:"4px 12px",borderRadius:20,border:filtArm===a?"2px solid #0F766E":"1px solid #E2E8F0",background:filtArm===a?"#F0FDFA":"#fff",color:filtArm===a?"#0F766E":"#64748B",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+          {a} <span style={{color:"#94A3B8",fontWeight:400}}>({cnt})</span>
+        </button>);
+      })}
+    </div>}
+
+    {/* LISTA agrupada por armador */}
+    {grouped.length>0?grouped.map(g=><div key={g.arm} style={{marginBottom:16}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+        <span style={{fontSize:11,fontWeight:700,color:"#334155"}}>⚓ {g.arm}</span>
+        <span style={{fontSize:9,color:"#94A3B8"}}>{g.items.length} pendência{g.items.length!==1?"s":""}</span>
+        <div style={{flex:1,height:1,background:"#E2E8F0"}}/>
       </div>
-      <div style={{display:"flex",gap:4}}><button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:false,resolvedAt:undefined,resolvedBy:undefined}:x))} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>↩️</button><button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true}:x))}} style={{padding:"4px 8px",borderRadius:4,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}}>🗑</button></div>
-    </div>)})}</div></div>}
-    {showNew&&<PendenciaModal onClose={()=>setShowNew(false)} onSave={f=>{setData(prev=>[{id:`PD-${Date.now()}`,...f,resolved:false,createdBy:user.name,createdAt:Date.now(),comments:[]},...A(prev)]);setShowNew(false)}}/>}
-    {editP&&<PendenciaModal initial={editP} onClose={()=>setEditP(null)} onSave={f=>{setData(prev=>A(prev).map(x=>x.id===editP.id?{...x,...f}:x));setEditP(null)}}/>}
+      <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>
+        {g.items.map(renderItem)}
+      </div>
+    </div>):<div style={{padding:40,textAlign:"center",color:"#94A3B8",fontSize:12,background:"#fff",borderRadius:10,border:"1px solid #E2E8F0"}}>
+      {pending.length>0?"Nenhuma pendência com este filtro":"Nenhuma pendência — tudo em dia! 🎉"}
+    </div>}
+
+    {/* RESOLVIDAS */}
+    {resolved.length>0&&<div style={{marginTop:16}}>
+      <p style={{...lS,marginBottom:6,color:"#047857"}}>✅ Resolvidas recentemente (ocultas após 1h)</p>
+      <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}>
+        {resolved.map(p=>{const rem=fmtRemaining(p.resolvedAt);return(
+          <div key={p.id} style={{padding:"10px 16px",borderBottom:"1px solid #F1F5F9",display:"flex",justifyContent:"space-between",opacity:.6}}>
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+                {renderPrioTag(p)}
+                {p.armador&&<span style={{fontSize:9,color:"#64748B"}}>⚓ {p.armador}</span>}
+              </div>
+              <p style={{fontSize:12,fontWeight:600}}>✓ BKG: {p.bookingNumber}</p>
+              <p style={{fontSize:11,color:"#64748B"}}>{p.observation}</p>
+              <p style={{fontSize:9,color:"#94A3B8",marginTop:2}}>Resolvido por {p.resolvedBy||"—"} · {p.resolvedAt?fDt(p.resolvedAt):""}{rem?` · ⏱ ${rem}`:""}</p>
+            </div>
+            <div style={{display:"flex",gap:4}}>
+              <button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:false,resolvedAt:undefined,resolvedBy:undefined,updatedAt:Date.now()}:x))} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #FDE68A",background:"#FEF3C7",color:"#B45309",fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Reabrir">↩️</button>
+              <button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true,updatedAt:Date.now()}:x))}} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Excluir">🗑</button>
+            </div>
+          </div>);
+        })}
+      </div>
+    </div>}
+
+    {showNew&&<PendenciaModal armadores={armadores} onClose={()=>setShowNew(false)} onSave={f=>{setData(prev=>[{id:`PD-${Date.now()}`,...f,resolved:false,createdBy:user.name,createdAt:Date.now(),updatedAt:Date.now(),comments:[]},...A(prev)]);setShowNew(false)}}/>}
+    {editP&&<PendenciaModal armadores={armadores} initial={editP} onClose={()=>setEditP(null)} onSave={f=>{setData(prev=>A(prev).map(x=>x.id===editP.id?{...x,...f,updatedAt:Date.now()}:x));setEditP(null)}}/>}
   </div>);
 }
 
@@ -1111,10 +1274,8 @@ function BackupRecovery({onClose,onRestore}){
 // ═════════════════════════════════════════════
 export default function App(){
   const[user,setUser]=useState(null);const[tab,setTab]=useState("bookings");const[loaded,setLoaded]=useState(false);
-  // ── Setters "raw" (uso interno — realtime, sync, load) ──
-  // Modificar estes NÃO dispara save ao Supabase.
-  const[bookings,setBookingsRaw]=useState([]);const[pendencias,setPendenciasRaw]=useState([]);
-  const[ships,setShipsRaw]=useState([]);const[solicitacoes,setSolicitacoesRaw]=useState([]);
+  const[bookings,setBookings]=useState([]);const[pendencias,setPendencias]=useState([]);
+  const[ships,setShips]=useState([]);const[solicitacoes,setSolicitacoes]=useState([]);
   const[users,setUsers]=useState(USR_DEF);const[armadores,setArmadores]=useState(ARM_DEF);const[logo,setLogo]=useState(null);
   const[showUsers,setShowUsers]=useState(false);const[showArm,setShowArm]=useState(false);const[showLogo,setShowLogo]=useState(false);const[showBackups,setShowBackups]=useState(false);
   const[showLog,setShowLog]=useState(false);
@@ -1122,226 +1283,151 @@ export default function App(){
   const[dbError,setDbError]=useState(null);
   const[saveStatus,setSaveStatus]=useState("idle");
   const[lastSavedAt,setLastSavedAt]=useState(null);
+  const saveTimerRef=useRef(null);
+  const backupRef=useRef(0);
+  const skipSaveRef=useRef(true); // começa true — pula saves até o load terminar
 
-  // ── Contador de mudanças do USUÁRIO ──
-  // Só incrementa quando o usuário faz uma ação (criar, editar, deletar).
-  // Realtime e sync NUNCA incrementam — logo NUNCA disparam save.
-  const userChangeRef=useRef(0);
-  const savedChangeRef=useRef(0);
-  const lastSavedVersionRef=useRef(0);
-  const savingRef=useRef(false);
-  const pendingSaveRef=useRef(null);
+  // Aliases para compatibilidade com o JSX abaixo
+  const setUsersWrapped=setUsers;
+  const setArmadoresWrapped=setArmadores;
+  const setLogoWrapped=setLogo;
 
-  // ── Setters "wrapped" (passados aos componentes — ações do USUÁRIO) ──
-  // Incrementam o contador → disparam save ao Supabase.
-  const setBookings=useCallback((updater)=>{userChangeRef.current++;setBookingsRaw(updater)},[]);
-  const setPendencias=useCallback((updater)=>{userChangeRef.current++;setPendenciasRaw(updater)},[]);
-  const setShips=useCallback((updater)=>{userChangeRef.current++;setShipsRaw(updater)},[]);
-  const setSolicitacoes=useCallback((updater)=>{userChangeRef.current++;setSolicitacoesRaw(updater)},[]);
-  // Users/armadores/logo mudam por ação do usuário → também incrementam
-  const setUsersWrapped=useCallback((v)=>{userChangeRef.current++;setUsers(v)},[]);
-  const setArmadoresWrapped=useCallback((v)=>{userChangeRef.current++;setArmadores(v)},[]);
-  const setLogoWrapped=useCallback((v)=>{userChangeRef.current++;setLogo(v)},[]);
-
-  const dedupeById=(arr)=>{
-    const m=new Map();
-    (arr||[]).forEach(it=>{
-      if(!it||!it.id)return;
-      const prev=m.get(it.id);
-      if(!prev){m.set(it.id,it);return}
-      if((it.updatedAt||it.createdAt||0)>=(prev.updatedAt||prev.createdAt||0))m.set(it.id,it);
-    });
-    return Array.from(m.values());
-  };
-
-  const mergeArr=(localArr,newArr)=>{
-    if(!newArr)return localArr;
-    return dedupeById([...(localArr||[]),...(newArr||[])]);
-  };
-
-  // ── applyState: usa setters RAW — NUNCA dispara save ──
-  const applyState=useCallback((d)=>{
-    if(d.bookings)  setBookingsRaw(prev=>mergeArr(prev,d.bookings));
-    if(d.pendencias)setPendenciasRaw(prev=>mergeArr(prev,d.pendencias));
-    if(d.ships)     setShipsRaw(prev=>mergeArr(prev,d.ships.map(s=>({...s,bookings:s.bookings||[]}))));
-    if(d.solicitacoes)setSolicitacoesRaw(prev=>mergeArr(prev,d.solicitacoes));
-    if(d.users){
-      const merged=[...(d.users||[])];
-      USR_DEF.forEach(def=>{if(!merged.find(u=>u.username===def.username))merged.push(def)});
-      setUsers(merged);
-    }
-    if(d.armadores?.length)setArmadores(d.armadores);
-    if(d.logo!==undefined)setLogo(d.logo);
-  },[]);
-
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════════════
   // LOAD INICIAL
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════════════
   useEffect(()=>{(async()=>{
-    const localData=loadLocalState();
+    const local=loadLocalState();
     if(supabase){
-      const connTest=await testConnection();
-      if(!connTest.ok){
-        setDbError(connTest.error);setOnline(false);
-        if(localData){
-          if(localData.bookings)setBookingsRaw(dedupeById(localData.bookings));
-          if(localData.pendencias)setPendenciasRaw(dedupeById(localData.pendencias));
-          if(localData.ships)setShipsRaw(dedupeById(localData.ships));
-          if(localData.solicitacoes)setSolicitacoesRaw(dedupeById(localData.solicitacoes));
-          if(localData.users?.length)setUsers(localData.users);
-          if(localData.armadores?.length)setArmadores(localData.armadores);
-          if(localData.logo!==undefined)setLogo(localData.logo);
+      const ct=await testConnection();
+      if(!ct.ok){
+        setDbError(ct.error);setOnline(false);
+        if(local){
+          if(local.bookings?.length)setBookings(local.bookings);
+          if(local.pendencias?.length)setPendencias(local.pendencias);
+          if(local.ships?.length)setShips(local.ships);
+          if(local.solicitacoes?.length)setSolicitacoes(local.solicitacoes);
+          if(local.users?.length)setUsers(local.users);
+          if(local.armadores?.length)setArmadores(local.armadores);
+          if(local.logo!==undefined)setLogo(local.logo);
         }
-        setLoaded(true);return;
+        setLoaded(true);
+        // Libera saves após o React processar os setStates do load
+        setTimeout(()=>{skipSaveRef.current=false},1000);
+        return;
       }
-      setDbError(null);
-      const remoteData=await loadState();
-      if(remoteData)lastSavedVersionRef.current=remoteData.__version||0;
-      const merged=mergeStates(remoteData,localData);
-      if(merged&&Object.keys(merged).length>0){
-        if(merged.bookings)setBookingsRaw(dedupeById(merged.bookings));
-        if(merged.pendencias)setPendenciasRaw(dedupeById(merged.pendencias));
-        if(merged.ships)setShipsRaw(dedupeById((merged.ships||[]).map(s=>({...s,bookings:s.bookings||[]}))));
-        if(merged.solicitacoes)setSolicitacoesRaw(dedupeById(merged.solicitacoes));
-        const u=[...(merged.users||[])];
+      setDbError(null);setOnline(true);
+      const remote=await loadState();
+      const data=remote||local;
+      if(data){
+        if(data.bookings?.length)setBookings(data.bookings);
+        if(data.pendencias?.length)setPendencias(data.pendencias);
+        if(data.ships?.length)setShips((data.ships||[]).map(s=>({...s,bookings:s.bookings||[]})));
+        if(data.solicitacoes?.length)setSolicitacoes(data.solicitacoes);
+        const u=[...(data.users||[])];
         USR_DEF.forEach(def=>{if(!u.find(x=>x.username===def.username))u.push(def)});
         if(u.length)setUsers(u);
-        if(merged.armadores?.length)setArmadores(merged.armadores);
-        if(merged.logo!==undefined)setLogo(merged.logo);
+        if(data.armadores?.length)setArmadores(data.armadores);
+        if(data.logo!==undefined)setLogo(data.logo);
       }
-      setOnline(true);
     }else{
-      if(localData){
-        if(localData.bookings)setBookingsRaw(dedupeById(localData.bookings));
-        if(localData.pendencias)setPendenciasRaw(dedupeById(localData.pendencias));
-        if(localData.ships)setShipsRaw(dedupeById(localData.ships));
-        if(localData.solicitacoes)setSolicitacoesRaw(dedupeById(localData.solicitacoes));
-        if(localData.users?.length)setUsers(localData.users);
-        if(localData.armadores?.length)setArmadores(localData.armadores);
-        if(localData.logo!==undefined)setLogo(localData.logo);
+      if(local){
+        if(local.bookings?.length)setBookings(local.bookings);
+        if(local.pendencias?.length)setPendencias(local.pendencias);
+        if(local.ships?.length)setShips(local.ships);
+        if(local.solicitacoes?.length)setSolicitacoes(local.solicitacoes);
+        if(local.users?.length)setUsers(local.users);
+        if(local.armadores?.length)setArmadores(local.armadores);
+        if(local.logo!==undefined)setLogo(local.logo);
       }
     }
     setLoaded(true);
+    // Libera saves após 1s (tempo de sobra pro React processar todos os setState do load)
+    setTimeout(()=>{skipSaveRef.current=false},1000);
   })()},[]);
 
-  const saveRef=useRef(null);
-  const backupRef=useRef(0);
-
-  // ═══════════════════════════════════════════════
-  // doSave — grava no Supabase. NUNCA desiste — se falhar, tenta de novo.
-  // ═══════════════════════════════════════════════
-  const doSave=useCallback(async(state,userName)=>{
-    if(!supabase||!userName)return;
-    if(savingRef.current){
-      pendingSaveRef.current={state,userName};
-      return;
-    }
-    savingRef.current=true;
-    setSaveStatus("saving");
-    try{
-      const res=await saveState(state,userName);
-      if(res&&res.ok){
-        setSaveStatus("ok");setLastSavedAt(Date.now());setDbError(null);
-        lastSavedVersionRef.current=res.version;
-        // VERIFICAÇÃO: lê de volta e compara contagens
-        try{
-          const verify=await loadState();
-          if(verify){
-            const savedBk=(verify.bookings||[]).length;
-            const localBk=(state.bookings||[]).length;
-            const savedSh=(verify.ships||[]).length;
-            const localSh=(state.ships||[]).length;
-            if(savedBk<localBk||savedSh<localSh){
-              console.warn('[VERIFY] Dados perdidos no save! Local:',localBk,'bk',localSh,'sh → Supabase:',savedBk,'bk',savedSh,'sh. Tentando de novo...');
-              // Re-save com os dados locais (que têm mais itens)
-              savingRef.current=false;
-              setTimeout(()=>doSave(state,userName),500);
-              return;
-            }
-          }
-        }catch(ve){console.warn('[VERIFY] erro:',ve)}
-      }else{
-        setSaveStatus("error");
-        const reason=res?.reason||"desconhecido";
-        setDbError("Falha: "+reason);
-        console.warn("Save failed:",reason);
-        // RETRY automático após 3 segundos (não bloqueia saves futuros!)
-        savingRef.current=false;
-        setTimeout(()=>{
-          console.log('[RETRY] Tentando salvar novamente...');
-          doSave(state,userName);
-        },3000);
-        return;
-      }
-    }catch(e){
-      setSaveStatus("error");
-      setDbError("Erro: "+(e?.message||e));
-      // RETRY automático
-      savingRef.current=false;
-      setTimeout(()=>doSave(state,userName),3000);
-      return;
-    }finally{
-      savingRef.current=false;
-      const pending=pendingSaveRef.current;
-      if(pending){
-        pendingSaveRef.current=null;
-        setTimeout(()=>doSave(pending.state,pending.userName),100);
-      }
-    }
-  },[]);
-
-  // ═══════════════════════════════════════════════
-  // SAVE — SOMENTE quando o USUÁRIO fez algo.
-  // SEM debounce — salva IMEDIATAMENTE.
-  // SEM gate de dbError — SEMPRE tenta salvar.
-  // ═══════════════════════════════════════════════
+  // ══════════════════════════════════════════
+  // AUTO-SAVE — único mecanismo de salvamento
+  // Roda TODA VEZ que qualquer dado muda.
+  // SEMPRE salva local. Só pula Supabase quando skipSaveRef=true.
+  // ══════════════════════════════════════════
   useEffect(()=>{
     if(!loaded)return;
-    const state={
-      bookings:dedupeById(bookings),
-      pendencias:dedupeById(pendencias),
-      ships:dedupeById(ships),
-      solicitacoes:dedupeById(solicitacoes),
-      users,armadores,logo
-    };
-    // SEMPRE salva localmente (rede de segurança instantânea)
-    saveLocalState(state);
-    // Backup rotativo a cada 2 min
-    if(Date.now()-backupRef.current>120000){backupRef.current=Date.now();pushLocalBackup(state)}
-    // Só salva no Supabase se o USUÁRIO fez alguma mudança
-    const hasUserChange=userChangeRef.current!==savedChangeRef.current;
-    if(!hasUserChange)return;
-    savedChangeRef.current=userChangeRef.current;
-    // SALVA IMEDIATAMENTE — sem debounce, sem gate de erro
-    if(supabase&&user){
-      if(saveRef.current)clearTimeout(saveRef.current);
-      saveRef.current=setTimeout(()=>doSave(state,user.name),200);
-    }
-  },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,loaded,user,doSave]);
 
-  // ═══════════════════════════════════════════════
-  // REALTIME — usa setters RAW (não dispara save)
-  // ═══════════════════════════════════════════════
+    const state={bookings,pendencias,ships,solicitacoes,users,armadores,logo};
+
+    // 1. SEMPRE salva local imediatamente (NUNCA pula isso)
+    saveLocalState(state);
+
+    // 2. Backup rotativo a cada 2 min
+    if(Date.now()-backupRef.current>120000){
+      backupRef.current=Date.now();
+      pushLocalBackup(state);
+    }
+
+    // 3. Pula Supabase se estamos aplicando dados remotos (evita eco)
+    if(skipSaveRef.current)return;
+
+    // 4. Salva no Supabase com debounce de 500ms
+    if(supabase&&user){
+      if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
+      saveTimerRef.current=setTimeout(async()=>{
+        setSaveStatus("saving");
+        try{
+          const res=await saveState(state,user.name);
+          if(res?.ok){
+            setSaveStatus("ok");
+            setLastSavedAt(Date.now());
+            setDbError(null);
+          }else{
+            setSaveStatus("error");
+            setDbError("Falha: "+(res?.reason||"?"));
+            // Retry em 5s
+            saveTimerRef.current=setTimeout(async()=>{
+              const r2=await saveState(state,user.name);
+              if(r2?.ok){setSaveStatus("ok");setLastSavedAt(Date.now());setDbError(null)}
+            },5000);
+          }
+        }catch(e){
+          setSaveStatus("error");
+          setDbError("Erro: "+(e?.message||e));
+        }
+      },500);
+    }
+  },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,user,loaded]);
+
+  // ══════════════════════════════════════════
+  // REALTIME — escuta mudanças de outros users
+  // ══════════════════════════════════════════
   useEffect(()=>{
     if(!supabase)return;
-    const unsub=subscribeToChanges((newData,version)=>{
-      try{
-        if(version&&version<=lastSavedVersionRef.current)return;
-        applyState(newData);
-      }catch(e){console.warn("Realtime error",e)}
+    const mergeInto=(prev,next)=>{
+      if(!next?.length)return prev;
+      const m=new Map();
+      [...prev,...next].forEach(i=>{
+        if(!i?.id)return;
+        const p=m.get(i.id);
+        if(!p){m.set(i.id,i);return}
+        if((i.updatedAt||i.createdAt||0)>=(p.updatedAt||p.createdAt||0))m.set(i.id,i);
+      });
+      return[...m.values()];
+    };
+    const unsub=subscribeToChanges((d)=>{
+      skipSaveRef.current=true;
+      if(d.bookings)setBookings(p=>mergeInto(p,d.bookings));
+      if(d.ships)setShips(p=>mergeInto(p,d.ships));
+      if(d.pendencias)setPendencias(p=>mergeInto(p,d.pendencias));
+      if(d.solicitacoes)setSolicitacoes(p=>mergeInto(p,d.solicitacoes));
+      // Libera saves após 1s
+      setTimeout(()=>{skipSaveRef.current=false},1000);
     });
     return unsub;
-  },[applyState]);
+  },[]);
 
-  // Alerta ao sair com save pendente
+  // Alerta ao sair
   useEffect(()=>{
-    const handler=(e)=>{
-      if(savingRef.current||pendingSaveRef.current){
-        e.preventDefault();e.returnValue="Salvamento em andamento...";
-      }
-    };
-    window.addEventListener("beforeunload",handler);
-    return()=>window.removeEventListener("beforeunload",handler);
+    const h=(e)=>{if(saveTimerRef.current){e.preventDefault();e.returnValue="Salvando..."}};
+    window.addEventListener("beforeunload",h);
+    return()=>window.removeEventListener("beforeunload",h);
   },[]);
 
   // ─── PUSH NOTIFICATIONS SYSTEM ───
@@ -1417,7 +1503,14 @@ export default function App(){
       if(ct.ok){
         setDbError(null);setOnline(true);
         const d=await loadState();
-        if(d){lastSavedVersionRef.current=Math.max(lastSavedVersionRef.current,d.__version||0);applyState(d)}
+        if(d){
+          skipSaveRef.current=true;
+          if(d.bookings)setBookings(d.bookings);
+          if(d.pendencias)setPendencias(d.pendencias);
+          if(d.ships)setShips(d.ships);
+          if(d.solicitacoes)setSolicitacoes(d.solicitacoes);
+          setTimeout(()=>{skipSaveRef.current=false},1000);
+        }
       }else{
         setDbError(ct.error);setOnline(false);
       }
@@ -1475,7 +1568,7 @@ export default function App(){
       <div style={{padding:"20px 24px",maxWidth:1440,margin:"0 auto"}}>
         <Notifications bookings={bookings} ships={ships} armadores={armadores} notifPerm={notifPerm} onRequestPerm={()=>{if("Notification" in window)Notification.requestPermission().then(p=>setNotifPerm(p))}}/>
         {tab==="bookings"&&<BookingsPanel data={bookings} setData={setBookings} armadores={armadores} user={user}/>}
-        {tab==="pendencias"&&<PendenciasPanel data={pendencias} setData={setPendencias} user={user}/>}
+        {tab==="pendencias"&&<PendenciasPanel data={pendencias} setData={setPendencias} user={user} armadores={armadores}/>}
         {tab==="standby"&&<StandbyPanel ships={ships} setShips={setShips} solicitacoes={solicitacoes} setSolicitacoes={setSolicitacoes} armadores={armadores} setArmadores={setArmadoresWrapped} user={user}/>}
         {tab==="lixeira"&&<LixeiraPanel data={bookings} setData={setBookings}/>}
       </div>
@@ -1486,10 +1579,10 @@ export default function App(){
         if(!window.confirm("Restaurar este backup? O estado atual será substituído (uma cópia de segurança do estado atual é feita automaticamente)."))return;
         // Salva snapshot do estado atual antes de restaurar
         pushLocalBackup({bookings,pendencias,ships,solicitacoes,users,armadores,logo});
-        if(s.bookings)setBookings(dedupeById(s.bookings));
-        if(s.pendencias)setPendencias(dedupeById(s.pendencias));
-        if(s.ships)setShips(dedupeById(s.ships));
-        if(s.solicitacoes)setSolicitacoes(dedupeById(s.solicitacoes));
+        if(s.bookings)setBookings(s.bookings);
+        if(s.pendencias)setPendencias(s.pendencias);
+        if(s.ships)setShips(s.ships);
+        if(s.solicitacoes)setSolicitacoes(s.solicitacoes);
         if(s.users?.length)setUsersWrapped(s.users);
         if(s.armadores?.length)setArmadoresWrapped(s.armadores);
         if(s.logo!==undefined)setLogoWrapped(s.logo);
