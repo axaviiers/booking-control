@@ -45,6 +45,19 @@ const fT=ms=>{if(ms<=0)return"00:00:00";const h=Math.floor(ms/3600000),m=Math.fl
 const pD=ts=>{if(!ts)return null;const s=String(ts);if(s.includes("T"))return new Date(s);return new Date(s+"T12:00:00")};
 const fD=ts=>ts?pD(ts).toLocaleDateString("pt-BR"):"—";
 const fDt=ts=>new Date(ts).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"});
+// ── CSV download (BOM UTF-8 + separador ";" para Excel pt-BR) ──
+const csvEsc=v=>{if(v==null)return"";const s=String(v);return /[";\n\r]/.test(s)?`"${s.replace(/"/g,'""')}"`:s};
+const tsFile=()=>{const d=new Date();const p=n=>String(n).padStart(2,"0");return`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`};
+function downloadCSV(filename,headers,rows){
+  try{
+    const lines=[headers.map(csvEsc).join(";"),...rows.map(r=>r.map(csvEsc).join(";"))];
+    const csv="\uFEFF"+lines.join("\r\n");
+    const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=filename;document.body.appendChild(a);a.click();
+    setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url)},100);
+  }catch(e){alert("Falha ao gerar relatório: "+(e?.message||e))}
+}
 const isEsc=r=>{try{return(r.status==="Solicitado"||r.status==="Precisando de estratégia")&&(Date.now()-(r.createdAt||0))>getSLA(r)}catch{return false}};
 const isUrg=r=>!!r.isUrgent;
 const slaR=r=>{try{if(!r||r.status==="Aprovado"||r.status==="Aguardando contrato"||r.status==="Cancelado"||r.status==="Enviado ao cliente"||r.status==="Em processo de transferência")return null;return getSLA(r)-(Date.now()-(r.createdAt||0))}catch{return null}};
@@ -614,6 +627,34 @@ function BookingsPanel({data,setData,armadores,user}){
       <div style={{display:"flex",gap:6}}>
         <button onClick={()=>{
           const list=active.filter(r=>r.status!=="Cancelado");
+          if(!list.length){alert("Nenhuma reserva ativa para exportar.");return}
+          const headers=["ID","Criado em","Status","Cliente","Ref. Cliente","Assunto","E-mail","Nº Booking","Qtd","Equipamento","POL","POD","Armador","Navio","Saída","Urgente","Motivo Urgência","Criado por"];
+          const rows=list.map(r=>[
+            r.id,
+            r.createdAt?fDt(r.createdAt):"",
+            r.status||"",
+            r.client||"",
+            r.clientRef||"",
+            r.subject||"",
+            r.emailSubject||"",
+            r.bookingNumber||"",
+            r.equipQty||"",
+            r.equipType||"",
+            r.pol||"",
+            r.pod||"",
+            r.armador||"",
+            r.navio||"",
+            r.dataSaida?fD(r.dataSaida):"",
+            r.isUrgent?"Sim":"Não",
+            r.urgentNote||"",
+            r.createdBy||""
+          ]);
+          downloadCSV(`bookings_${tsFile()}.csv`,headers,rows);
+        }} style={{...bG,padding:"7px 14px",fontSize:11,display:"flex",alignItems:"center",gap:5,borderColor:"#1D4ED8",color:"#1D4ED8",fontWeight:600}} title="Baixar relatório dos bookings ativos em CSV (abre no Excel)">
+          📥 Baixar Relatório
+        </button>
+        <button onClick={()=>{
+          const list=active.filter(r=>r.status!=="Cancelado");
           if(!list.length){alert("Nenhuma reserva ativa para relatar.");return}
           const byStatus={};
           list.forEach(r=>{const k=r.status||"—";(byStatus[k]=byStatus[k]||[]).push(r)});
@@ -778,7 +819,31 @@ function PendenciasPanel({data,setData,user,armadores=[]}){
           <p style={{fontSize:9,fontWeight:600,textTransform:"uppercase",color:"#065F46"}}>✅ Resolvidas</p>
         </div>
       </div>
-      <button onClick={()=>setShowNew(true)} style={{...bP,background:"#B45309",padding:"10px 20px",fontSize:12}}>+ Nova Pendência</button>
+      <div style={{display:"flex",gap:6}}>
+        <button onClick={()=>{
+          const list=[...pending,...resolved];
+          if(!list.length){alert("Nenhuma pendência para exportar.");return}
+          const prioLabel={urgente:"Urgente",importante:"Importante",com_tempo:"Com Tempo"};
+          const headers=["ID","Status","Prioridade","Armador","Nº Booking","Observação","Criado por","Criado em","Resolvido por","Resolvido em","Comentários"];
+          const rows=list.map(p=>[
+            p.id,
+            p.resolved?"Resolvida":"Pendente",
+            prioLabel[p.prioridade]||prioLabel.importante,
+            p.armador||"",
+            p.bookingNumber||"",
+            p.observation||"",
+            p.createdBy||"",
+            p.createdAt?fDt(p.createdAt):"",
+            p.resolvedBy||"",
+            p.resolvedAt?fDt(p.resolvedAt):"",
+            (A(p.comments)||[]).map(c=>`[${c.by} ${c.at?fDt(c.at):""}] ${c.text}`).join(" | ")
+          ]);
+          downloadCSV(`pendencias_${tsFile()}.csv`,headers,rows);
+        }} style={{padding:"10px 18px",borderRadius:8,border:"1px solid #B45309",background:"#fff",color:"#B45309",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}} title="Baixar relatório das pendências em CSV (abre no Excel)">
+          📥 Baixar Relatório
+        </button>
+        <button onClick={()=>setShowNew(true)} style={{...bP,background:"#B45309",padding:"10px 20px",fontSize:12}}>+ Nova Pendência</button>
+      </div>
     </div>
 
     {/* FILTRO por armador */}
@@ -1127,7 +1192,44 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
         <div style={{padding:"10px 18px",borderRadius:10,background:"#DBEAFE",border:"1px solid #BFDBFE",textAlign:"center"}}><p style={{fontSize:20,fontWeight:700,color:"#1D4ED8"}}>{totBkgs}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#1E40AF"}}>Bookings</p></div>
         {armCfg?.ddlDays>0&&<div style={{padding:"10px 14px",borderRadius:10,background:"#FEF2F2",border:"1px solid #FECACA",textAlign:"center"}}><p style={{fontSize:18,fontWeight:700,color:"#DC2626"}}>{armCfg.ddlDays}d</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#991B1B"}}>antes do {(armCfg.cancelRef||"DDL")==="ETD"?"ETD":"DDL"}</p></div>}
       </div>
-      <button onClick={()=>setShowNew(true)} style={{...bP,background:"#0F766E",padding:"8px 16px",fontSize:11}}>+ Novo Navio</button>
+      <div style={{display:"flex",gap:6}}>
+        <button onClick={()=>{
+          // Exporta navios + bookings do armador selecionado
+          if(!armShips.length){alert(`Nenhum navio cadastrado para ${selArm}.`);return}
+          const headers=["Armador","Navio","ETD","Data Cancelamento","POL Navio","POD Navio","Nº Booking","Cliente","Ref. Cliente","POL Booking","POD Booking","DDL Carga","Tipo Cntr","Qtd Total","Qtd Usando","Sobra","Observação","Criado em"];
+          const rows=[];
+          armShips.forEach(ship=>{
+            const calc=computeCancelDate(ship,armCfg);
+            const etd=ship.previsaoSaida?fD(ship.previsaoSaida):"";
+            const cancelDate=calc.date?calc.date.toLocaleDateString("pt-BR"):(calc.error||"");
+            const bkgs=ship.bookings||[];
+            if(bkgs.length===0){
+              rows.push([selArm,ship.nome||"",etd,cancelDate,ship.pol||"",ship.pod||"","","","","","","","","","","","",ship.createdAt?fDt(ship.createdAt):""]);
+            }else{
+              bkgs.forEach(b=>{
+                const total=b.qtdDisponivel||b.qtdTotal||0;
+                const usando=b.qtdUsando||0;
+                const sobra=total-usando;
+                rows.push([
+                  selArm,ship.nome||"",etd,cancelDate,ship.pol||"",ship.pod||"",
+                  b.bookingNumber||"",b.client||"",b.clientRef||"",
+                  b.pol||ship.pol||"",b.pod||ship.pod||"",
+                  b.deadlineCarga?fD(b.deadlineCarga):"",
+                  b.tipoCntr||(b.equipQty?`${b.equipQty}x${b.equipType||""}`:""),
+                  total||"",usando||"",sobra||"",
+                  b.observation||"",
+                  b.createdAt?fDt(b.createdAt):""
+                ]);
+              });
+            }
+          });
+          const safe=String(selArm||"standby").replace(/[^A-Za-z0-9_-]/g,"_");
+          downloadCSV(`standby_${safe}_${tsFile()}.csv`,headers,rows);
+        }} style={{padding:"8px 14px",borderRadius:6,border:"1px solid #0F766E",background:"#fff",color:"#0F766E",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}} title={`Baixar relatório dos navios e bookings de ${selArm} em CSV (abre no Excel)`}>
+          📥 Baixar Relatório
+        </button>
+        <button onClick={()=>setShowNew(true)} style={{...bP,background:"#0F766E",padding:"8px 16px",fontSize:11}}>+ Novo Navio</button>
+      </div>
     </div>
 
     {/* Armador tabs — styled like spreadsheet tabs */}
