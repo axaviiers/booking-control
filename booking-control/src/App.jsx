@@ -298,7 +298,7 @@ function BookingDetail({req,onClose,onChangeStatus,onUpdate,onDelete,user}){
       </div>
     </div>:<>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:8}}>
-      {[["Cliente",req.client],["Ref.",req.clientRef],["Booking",req.bookingNumber||"Pendente"],["Equip.",`${req.equipQty}x ${req.equipType}`],["Armador",req.armador],["E-mail",req.emailSubject],["Navio",req.navio],["Saída",req.dataSaida?fD(req.dataSaida):null]].map(([l,v],i)=><div key={i} style={{padding:"7px 10px",borderRadius:6,background:"#F8FAFC"}}><p style={{color:"#94A3B8",fontSize:9,textTransform:"uppercase"}}>{l}</p><p style={{color:"#334155",fontSize:12,fontWeight:500}}>{v||"—"}</p></div>)}
+      {[["Cliente",req.client],["Ref.",req.clientRef],["Booking",req.bookingNumber||"Pendente"],["Equip.",`${req.equipQty}x ${req.equipType}`],["Armador",req.armador],["E-mail",req.emailSubject],["Navio",req.navio],["Saída",req.dataSaida?fD(req.dataSaida):null],["Criado em",req.createdAt?fDt(req.createdAt):null]].map(([l,v],i)=><div key={i} style={{padding:"7px 10px",borderRadius:6,background:"#F8FAFC"}}><p style={{color:"#94A3B8",fontSize:9,textTransform:"uppercase"}}>{l}</p><p style={{color:"#334155",fontSize:12,fontWeight:500}}>{v||"—"}</p></div>)}
     </div>
     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
       <div style={{padding:"7px 10px",borderRadius:6,background:"#EFF6FF"}}><p style={{color:"#94A3B8",fontSize:9}}>POL</p><p style={{color:"#1D4ED8",fontSize:13,fontWeight:600}}>🚢 {req.pol}</p></div>
@@ -625,6 +625,7 @@ function BookingsPanel({data,setData,armadores,user}){
             items.forEach(r=>{
               txt+=`\n• *${r.id}* — ${r.client||"—"}`;
               if(r.clientRef)txt+=` (Ref: ${r.clientRef})`;
+              if(r.createdAt)txt+=`\n  Criado em: ${fDt(r.createdAt)}`;
               txt+=`\n  ${r.equipQty}x ${r.equipType} • ${r.armador||"—"}`;
               txt+=`\n  ${r.pol||"—"} → ${r.pod||"—"}`;
               if(r.bookingNumber)txt+=`\n  Booking: ${r.bookingNumber}`;
@@ -646,11 +647,12 @@ function BookingsPanel({data,setData,armadores,user}){
       </div>
     </div>
     <div style={{background:"#fff",border:"1px solid #E2E8F0",borderRadius:10,overflow:"hidden"}}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:1000}}>
-      <thead><tr style={{borderBottom:"2px solid #F1F5F9",background:"#FAFBFC"}}>{["","ID","Cliente","Assunto","Booking","Equip.","Rota","Navio","Armador","Status","SLA",""].map((h,i)=><th key={i} style={{padding:"10px 4px",textAlign:"left",color:"#94A3B8",fontSize:8,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+      <thead><tr style={{borderBottom:"2px solid #F1F5F9",background:"#FAFBFC"}}>{["","ID","Criado em","Cliente","Assunto","Booking","Equip.","Rota","Navio","Armador","Status","SLA",""].map((h,i)=><th key={i} style={{padding:"10px 4px",textAlign:"left",color:"#94A3B8",fontSize:8,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
       <tbody>{filt.map(r=>{const esc=isEsc(r),urg=isUrg(r),sla=slaR(r),warn=sla!==null&&sla>0&&sla<URGENT_MS;
         return(<tr key={r.id} onClick={()=>setSel(r)} style={{borderBottom:"1px solid #F1F5F9",background:esc?"#FEF2F2":urg?"#FEF2F2":"#fff",cursor:"pointer"}} onMouseOver={e=>{if(!esc&&!urg)e.currentTarget.style.background="#F8FAFC"}} onMouseOut={e=>{e.currentTarget.style.background=esc?"#FEF2F2":urg?"#FEF2F2":"#fff"}}>
           <td style={{padding:"10px 3px",width:16}}>{urg&&<span title={r.urgentNote}>🔴</span>}{esc&&!urg&&<span style={{animation:"pulse 1s ease infinite",fontSize:10}}>🟠</span>}</td>
           <td style={{padding:"10px 4px",fontSize:10,color:"#94A3B8",fontWeight:600}}>{r.id}</td>
+          <td style={{padding:"10px 4px",fontSize:9,color:"#64748B",whiteSpace:"nowrap"}}>{r.createdAt?fDt(r.createdAt):"—"}</td>
           <td style={{padding:"10px 4px"}}><p style={{fontSize:11,fontWeight:600}}>{r.client}</p></td>
           <td style={{padding:"10px 4px",fontSize:10,color:"#475569",maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.subject}</td>
           <td style={{padding:"10px 4px",fontSize:10,color:r.bookingNumber?"#475569":"#CBD5E1"}}>{r.bookingNumber||"—"}</td>
@@ -662,7 +664,7 @@ function BookingsPanel({data,setData,armadores,user}){
           <td style={{padding:"10px 4px",fontSize:10,fontWeight:600,whiteSpace:"nowrap",color:sla===null?"#047857":sla>0?(warn?"#B45309":"#475569"):"#DC2626"}}>{sla===null?"✓":sla>0?fT(sla):<span style={{animation:"pulse 1.5s ease infinite"}}>ESTOURADO</span>}</td>
           <td style={{padding:"10px 3px"}}><button onClick={e=>{e.stopPropagation();if(window.confirm("Mover para lixeira?"))delReq(r.id)}} style={{background:"none",border:"none",color:"#CBD5E1",cursor:"pointer",fontSize:11}} title="Excluir">🗑</button></td>
         </tr>)})}
-        {filt.length===0&&<tr><td colSpan={12} style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma solicitação</td></tr>}
+        {filt.length===0&&<tr><td colSpan={13} style={{padding:32,textAlign:"center",color:"#94A3B8",fontSize:12}}>Nenhuma solicitação</td></tr>}
       </tbody></table></div></div>
     {showNew&&<NewBookingModal onClose={()=>setShowNew(false)} onSave={addReq} armadores={armadores}/>}
     {sel&&<BookingDetail req={sel} onClose={()=>setSel(null)} onChangeStatus={chgSt} onUpdate={updReq} onDelete={delReq} user={user}/>}
