@@ -1554,104 +1554,163 @@ function ManualVesselForm({initial,fields,onSave,onCancel}){
   </>);
 }
 
-// ── Email template ──
+// ── Email template (modern card-based) ──
 function OfertaEmailPreview({grouped,mesRef,logo,ref2}){
-  const BRD="#0F4C81",SEC="#2980B9",DK="#0A2A42",LT="#E8F0F8";
-  return(<div ref={ref2} style={{background:"#fff",maxWidth:680,margin:"0 auto",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}>
-    <div style={{background:`linear-gradient(135deg,${BRD},${SEC})`,padding:"28px 32px",textAlign:"center"}}>
-      {logo?<img src={logo} alt="Inter Shipping" style={{maxHeight:48,marginBottom:6}}/>:null}
-      <div style={{color:"#fff",fontSize:26,fontWeight:800,fontFamily:"Georgia,serif"}}>Inter <span style={{color:"#7EC8E3"}}>Shipping</span></div>
-      <div style={{color:"rgba(255,255,255,.5)",fontSize:9,letterSpacing:3,marginTop:3}}>ASSESSORIA E LOGÍSTICA INTERNACIONAL</div>
-    </div>
-    <div style={{background:DK,padding:"12px 32px",textAlign:"center"}}>
-      <div style={{color:"#7EC8E3",fontSize:10,fontWeight:600,letterSpacing:2}}>📦 ESPAÇOS GARANTIDOS</div>
-      <div style={{color:"#fff",fontSize:18,fontWeight:700,marginTop:3}}>{mesRef}</div>
-    </div>
-    <div style={{display:"flex",justifyContent:"center",gap:14,padding:"10px 32px",background:LT,borderBottom:"1px solid #e2e8f0"}}>
-      {["Hapag-Lloyd","PIL","COSCO","CMA CGM","MSC","Maersk"].map(a=><div key={a} style={{display:"flex",alignItems:"center",gap:3}}><div style={{width:8,height:8,borderRadius:2,background:aC(a)}}/><span style={{fontSize:9,fontWeight:600,color:"#64748B"}}>{a}</span></div>)}
-    </div>
-    <div style={{padding:"16px 20px"}}>
-      {Object.entries(grouped).map(([route,items])=>(
-        <div key={route} style={{marginBottom:20}}>
-          <div style={{fontSize:13,fontWeight:800,color:BRD,borderBottom:`3px solid ${SEC}`,paddingBottom:5,marginBottom:10}}>🚢 {route}</div>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-            <thead><tr style={{background:BRD}}>
-              {["Armador","Navio","Rota","ETD","DL Draft","DL Carga","Tipo Cntr"].map(h=><th key={h} style={{padding:"7px 5px",color:"#fff",fontWeight:600,fontSize:9,textAlign:"left",letterSpacing:.3}}>{h}</th>)}
-            </tr></thead>
-            <tbody>{items.map((v,i)=>{const c=aC(v.carrier);return(
-              <tr key={i} style={{background:i%2===0?"#fff":LT,borderBottom:"1px solid #edf2f7"}}>
-                <td style={{padding:"7px 5px"}}><span style={{background:c,color:"#fff",padding:"1px 5px",borderRadius:3,fontSize:8,fontWeight:700}}>{v.carrier}</span></td>
-                <td style={{padding:"7px 5px",fontWeight:700,color:BRD}}>{v.vessel}</td>
-                <td style={{padding:"7px 5px",color:"#64748B",fontSize:10}}>{v.pol}→{v.pod}{v.via?` via ${v.via}`:""}</td>
-                <td style={{padding:"7px 5px",fontWeight:700,color:BRD}}>{v.etd}</td>
-                <td style={{padding:"7px 5px",color:c,fontWeight:600,fontSize:10}}>{v.dlDraft||"—"}</td>
-                <td style={{padding:"7px 5px",color:c,fontWeight:600,fontSize:10}}>{v.dlCarga||"—"}</td>
-                <td style={{padding:"7px 5px",fontWeight:700,color:c,textAlign:"center"}}>{v.containers||"—"}</td>
-              </tr>)})}</tbody>
-          </table>
-        </div>
-      ))}
-    </div>
-    <div style={{padding:"0 20px 16px",textAlign:"center"}}>
-      <div style={{background:`linear-gradient(135deg,${LT},#D6EAF8)`,borderRadius:10,padding:"16px 20px",border:`1px solid ${SEC}30`}}>
-        <div style={{fontSize:13,fontWeight:700,color:BRD,marginBottom:4}}>Não deixe de nos consultar!</div>
-        <div style={{fontSize:11,color:"#64748B",lineHeight:1.5}}>Ainda temos espaços para <strong>{mesRef}</strong> nas demais rotas.<br/>Caso tenham cargas em estudo, recomendamos antecipar a consulta.</div>
+  const P="#0F4C81",S="#2980B9",D="#0A2A42";
+  const routes=Object.entries(grouped);
+  const totalNavios=[...new Set(routes.flatMap(([,items])=>items.map(v=>v.vessel)))].length;
+  return(<div ref={ref2} style={{background:"#F4F6F9",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",padding:"0"}}>
+    <div style={{maxWidth:640,margin:"0 auto",background:"#F4F6F9"}}>
+
+      {/* ── HEADER ── */}
+      <div style={{background:P,padding:"32px 40px 28px",textAlign:"center"}}>
+        {logo?<img src={logo} alt="Inter Shipping" style={{maxHeight:52,marginBottom:8}}/>:null}
+        {!logo&&<div style={{color:"#fff",fontSize:28,fontWeight:800,fontFamily:"Georgia,serif",letterSpacing:"-0.5px"}}>Inter <span style={{color:"#7EC8E3"}}>Shipping</span></div>}
+        <div style={{color:"rgba(255,255,255,.45)",fontSize:8,letterSpacing:4,marginTop:6,textTransform:"uppercase"}}>Assessoria e Logística Internacional</div>
       </div>
-    </div>
-    <div style={{background:DK,padding:"16px 32px",textAlign:"center"}}>
-      <div style={{color:"#7EC8E3",fontSize:13,fontWeight:700,fontFamily:"Georgia,serif"}}>Inter Shipping</div>
-      <div style={{color:"rgba(255,255,255,.4)",fontSize:9,marginTop:4}}>Assessoria e Logística Internacional<br/>Ficamos à disposição para avaliar cada operação de forma personalizada.</div>
+
+      {/* ── TITLE STRIP ── */}
+      <div style={{background:"#fff",padding:"22px 40px",borderBottom:"1px solid #E8ECF1"}}>
+        <div style={{fontSize:9,fontWeight:700,color:S,letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Espaços Confirmados</div>
+        <div style={{fontSize:22,fontWeight:800,color:P,letterSpacing:"-0.3px"}}>{mesRef}</div>
+        <div style={{fontSize:11,color:"#8896A6",marginTop:6}}>{totalNavios} navio{totalNavios!==1?"s":""} · {routes.length} rota{routes.length!==1?"s":""} · Disponibilidade garantida</div>
+      </div>
+
+      {/* ── ROUTES ── */}
+      <div style={{padding:"24px 24px 8px"}}>
+        {routes.map(([route,items])=>(
+          <div key={route} style={{marginBottom:24}}>
+            {/* Route header */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,paddingLeft:4}}>
+              <div style={{width:4,height:28,borderRadius:2,background:S}}/>
+              <div>
+                <div style={{fontSize:15,fontWeight:800,color:P,lineHeight:1.2}}>{route}</div>
+                <div style={{fontSize:9,color:"#8896A6",marginTop:1}}>{items.length} opç{items.length!==1?"ões":"ão"} de embarque</div>
+              </div>
+            </div>
+
+            {/* Vessel cards */}
+            {items.map((v,i)=>{const c=aC(v.carrier);return(
+              <div key={i} style={{background:"#fff",borderRadius:10,marginBottom:8,overflow:"hidden",border:"1px solid #E8ECF1"}}>
+                {/* Card header with armador accent */}
+                <div style={{display:"flex",alignItems:"stretch"}}>
+                  <div style={{width:5,background:c,flexShrink:0}}/>
+                  <div style={{flex:1,padding:"14px 18px"}}>
+                    {/* Row 1: vessel name + armador */}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <div style={{fontSize:14,fontWeight:700,color:"#1E293B"}}>{v.vessel}</div>
+                      <span style={{background:`${c}12`,color:c,padding:"3px 10px",borderRadius:20,fontSize:9,fontWeight:700,letterSpacing:".3px"}}>{v.carrier}</span>
+                    </div>
+                    {/* Row 2: key details grid */}
+                    <div style={{display:"flex",gap:0,flexWrap:"wrap"}}>
+                      {[
+                        {label:"Rota",value:`${v.pol} → ${v.pod}`,w:"35%"},
+                        {label:"ETD",value:v.etd,w:"20%",bold:true},
+                        {label:"DL Draft",value:v.dlDraft||"—",w:"22%",color:c},
+                        {label:"Tipo",value:v.containers||"—",w:"23%",bold:true},
+                      ].map((d,j)=>(
+                        <div key={j} style={{width:d.w,paddingRight:8}}>
+                          <div style={{fontSize:8,fontWeight:600,color:"#A0AEC0",textTransform:"uppercase",letterSpacing:".5px",marginBottom:2}}>{d.label}</div>
+                          <div style={{fontSize:12,fontWeight:d.bold?700:500,color:d.color||"#334155"}}>{d.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );})}
+          </div>
+        ))}
+      </div>
+
+      {/* ── CTA ── */}
+      <div style={{padding:"0 24px 24px"}}>
+        <div style={{background:"#fff",borderRadius:10,padding:"24px 28px",textAlign:"center",border:"1px solid #E8ECF1"}}>
+          <div style={{fontSize:14,fontWeight:700,color:P,marginBottom:6}}>Precisa de espaço em outra rota?</div>
+          <div style={{fontSize:12,color:"#8896A6",lineHeight:1.6,marginBottom:4}}>Temos opções para <strong style={{color:P}}>{mesRef}</strong> em diversas rotas.<br/>Consulte-nos para garantir as melhores condições.</div>
+        </div>
+      </div>
+
+      {/* ── FOOTER ── */}
+      <div style={{background:D,padding:"24px 40px",textAlign:"center"}}>
+        {logo?<img src={logo} alt="Inter Shipping" style={{maxHeight:32,marginBottom:6,opacity:.7}}/>:
+        <div style={{color:"#7EC8E3",fontSize:14,fontWeight:700,fontFamily:"Georgia,serif",marginBottom:4}}>Inter Shipping</div>}
+        <div style={{color:"rgba(255,255,255,.35)",fontSize:9,lineHeight:1.7}}>Assessoria e Logística Internacional<br/>Ficamos à disposição para avaliar cada operação.</div>
+      </div>
+
     </div>
   </div>);
 }
 
-// ── WhatsApp template ──
+// ── WhatsApp template (modern compact) ──
 function OfertaWhatsPreview({grouped,mesRef,logo,ref2}){
-  const BRD="#0F4C81",SEC="#2980B9",DK="#0A2A42",LT="#E8F0F8";
-  return(<div ref={ref2} style={{background:"#fff",width:390,margin:"0 auto",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",borderRadius:16,overflow:"hidden",boxShadow:"0 4px 24px rgba(0,0,0,.12)"}}>
-    <div style={{background:`linear-gradient(135deg,${BRD},${SEC})`,padding:"22px 18px",textAlign:"center"}}>
-      {logo?<img src={logo} alt="Inter Shipping" style={{maxHeight:36,marginBottom:4}}/>:null}
-      <div style={{color:"#fff",fontSize:20,fontWeight:800,fontFamily:"Georgia,serif"}}>Inter <span style={{color:"#7EC8E3"}}>Shipping</span></div>
-      <div style={{color:"rgba(255,255,255,.4)",fontSize:7,letterSpacing:2,marginTop:2}}>ASSESSORIA E LOGÍSTICA INTERNACIONAL</div>
-      <div style={{marginTop:10,background:"rgba(255,255,255,.15)",borderRadius:10,padding:"8px 14px"}}>
-        <div style={{color:"#7EC8E3",fontSize:8,fontWeight:600,letterSpacing:1.5}}>📦 ESPAÇOS GARANTIDOS</div>
-        <div style={{color:"#fff",fontSize:16,fontWeight:800,marginTop:2}}>{mesRef}</div>
+  const P="#0F4C81",S="#2980B9",D="#0A2A42";
+  const routes=Object.entries(grouped);
+  return(<div ref={ref2} style={{background:"#F4F6F9",width:400,margin:"0 auto",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",borderRadius:20,overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,.10)"}}>
+
+    {/* ── HEADER ── */}
+    <div style={{background:P,padding:"28px 24px 22px",textAlign:"center"}}>
+      {logo?<img src={logo} alt="Inter Shipping" style={{maxHeight:40,marginBottom:6}}/>:
+      <div style={{color:"#fff",fontSize:22,fontWeight:800,fontFamily:"Georgia,serif"}}>Inter <span style={{color:"#7EC8E3"}}>Shipping</span></div>}
+      <div style={{color:"rgba(255,255,255,.35)",fontSize:7,letterSpacing:3,marginTop:4}}>ASSESSORIA E LOGÍSTICA INTERNACIONAL</div>
+      <div style={{marginTop:14,background:"rgba(255,255,255,.08)",borderRadius:12,padding:"12px 16px",border:"1px solid rgba(255,255,255,.1)"}}>
+        <div style={{color:"#7EC8E3",fontSize:8,fontWeight:700,letterSpacing:2}}>ESPAÇOS CONFIRMADOS</div>
+        <div style={{color:"#fff",fontSize:20,fontWeight:800,marginTop:3,letterSpacing:"-0.3px"}}>{mesRef}</div>
       </div>
     </div>
-    <div style={{display:"flex",justifyContent:"center",gap:8,padding:"8px 14px",background:LT}}>
-      {["Hapag-Lloyd","PIL","COSCO","CMA CGM"].map(a=><div key={a} style={{display:"flex",alignItems:"center",gap:3}}><div style={{width:6,height:6,borderRadius:2,background:aC(a)}}/><span style={{fontSize:8,fontWeight:600,color:"#64748B"}}>{a}</span></div>)}
-    </div>
-    <div style={{padding:"10px 12px"}}>
-      {Object.entries(grouped).map(([route,items])=>(
-        <div key={route} style={{marginBottom:12}}>
-          <div style={{fontSize:11,fontWeight:800,color:BRD,borderLeft:`3px solid ${SEC}`,paddingLeft:7,marginBottom:6}}>🚢 {route}</div>
+
+    {/* ── ROUTES ── */}
+    <div style={{padding:"16px 14px 6px"}}>
+      {routes.map(([route,items])=>(
+        <div key={route} style={{marginBottom:16}}>
+          {/* Route label */}
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <div style={{width:3,height:20,borderRadius:2,background:S}}/>
+            <div style={{fontSize:12,fontWeight:800,color:P}}>{route}</div>
+            <div style={{flex:1,height:1,background:"#E2E8F0"}}/>
+          </div>
+
+          {/* Vessel cards */}
           {items.map((v,i)=>{const c=aC(v.carrier);return(
-            <div key={i} style={{background:"#fff",borderRadius:8,border:"1px solid #edf2f7",borderLeft:`3px solid ${c}`,padding:"7px 9px",marginBottom:5,fontSize:10}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div><span style={{background:c,color:"#fff",padding:"1px 4px",borderRadius:3,fontSize:7,fontWeight:700,marginRight:3}}>{v.carrier}</span><strong style={{color:BRD,fontSize:11}}>{v.vessel}</strong></div>
-                <span style={{fontWeight:800,color:c,fontSize:9}}>{v.containers||""}</span>
+            <div key={i} style={{background:"#fff",borderRadius:10,marginBottom:6,overflow:"hidden",border:"1px solid #EDF0F4"}}>
+              <div style={{display:"flex",alignItems:"stretch"}}>
+                <div style={{width:4,background:c,flexShrink:0}}/>
+                <div style={{flex:1,padding:"10px 14px"}}>
+                  {/* Ship + armador */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#1E293B"}}>{v.vessel}</div>
+                    <span style={{background:`${c}10`,color:c,padding:"2px 8px",borderRadius:12,fontSize:8,fontWeight:700}}>{v.carrier}</span>
+                  </div>
+                  {/* Details row */}
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#64748B"}}>
+                    <span>{v.pol} → {v.pod}</span>
+                    <span style={{fontWeight:700,color:P}}>ETD {v.etd}</span>
+                  </div>
+                  {/* Draft + type row */}
+                  {(v.dlDraft||v.containers)&&<div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:9}}>
+                    {v.dlDraft?<span style={{color:"#8896A6"}}>Draft: {v.dlDraft}</span>:<span/>}
+                    {v.containers?<span style={{fontWeight:700,color:c}}>{v.containers}</span>:<span/>}
+                  </div>}
+                </div>
               </div>
-              <div style={{display:"flex",justifyContent:"space-between",marginTop:4,color:"#64748B",fontSize:9}}>
-                <span>{v.pol}→{v.pod}{v.transit?` · ${v.transit}`:""}</span>
-                <span style={{fontWeight:700,color:BRD}}>ETD {v.etd}</span>
-              </div>
-              {(v.dlDraft||v.dlCarga)&&<div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:8}}>
-                {v.dlDraft&&<span style={{color:c}}>Draft: {v.dlDraft}</span>}
-                {v.dlCarga&&<span style={{color:c}}>Carga: {v.dlCarga}</span>}
-              </div>}
-            </div>);})}
+            </div>
+          );})}
         </div>
       ))}
     </div>
-    <div style={{padding:"0 12px 12px"}}>
-      <div style={{background:`linear-gradient(135deg,${LT},#D6EAF8)`,borderRadius:10,padding:"12px 14px",textAlign:"center",border:`1px solid ${SEC}30`}}>
-        <div style={{fontSize:11,fontWeight:700,color:BRD}}>💬 Consulte-nos!</div>
-        <div style={{fontSize:9,color:"#64748B",marginTop:3}}>Espaços para {mesRef} nas demais rotas.</div>
+
+    {/* ── CTA ── */}
+    <div style={{padding:"0 14px 16px"}}>
+      <div style={{background:"#fff",borderRadius:12,padding:"16px 18px",textAlign:"center",border:"1px solid #EDF0F4"}}>
+        <div style={{fontSize:12,fontWeight:700,color:P}}>Precisa de outra rota?</div>
+        <div style={{fontSize:10,color:"#8896A6",marginTop:4}}>Consulte-nos — espaços para {mesRef} em diversas rotas.</div>
       </div>
     </div>
-    <div style={{background:DK,padding:"12px 18px",textAlign:"center"}}>
+
+    {/* ── FOOTER ── */}
+    <div style={{background:D,padding:"16px 24px",textAlign:"center"}}>
       <div style={{color:"#7EC8E3",fontSize:11,fontWeight:700,fontFamily:"Georgia,serif"}}>Inter Shipping</div>
-      <div style={{color:"rgba(255,255,255,.35)",fontSize:8,marginTop:2}}>Assessoria e Logística Internacional</div>
+      <div style={{color:"rgba(255,255,255,.3)",fontSize:8,marginTop:3}}>Assessoria e Logística Internacional</div>
     </div>
   </div>);
 }
