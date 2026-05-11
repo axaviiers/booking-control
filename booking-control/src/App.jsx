@@ -1387,27 +1387,27 @@ function OfertaPanel({ships,armadores,logo}){
   const toggle=id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const selectAll=ids=>setSel(p=>[...new Set([...p,...ids])]);
 
+  const _hti=()=>import(/* @vite-ignore */"https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/+esm");
   const downloadImg=async(ref,name)=>{
     if(!ref.current)return;
     try{
-      const{toPng}=await import("html-to-image");
+      const{toPng}=await _hti();
       const url=await toPng(ref.current,{pixelRatio:2,backgroundColor:"#F4F6F9"});
       const a=document.createElement("a");a.href=url;a.download=`${name}.png`;a.click();
-    }catch(e){alert("Instale: npm install html-to-image\n\n"+e.message)}
+    }catch(e){alert("Erro ao gerar imagem: "+e.message)}
   };
   const downloadPdf=async(ref,name)=>{
     if(!ref.current)return;
     try{
-      const{toPng}=await import("html-to-image");
+      const{toPng}=await _hti();
       const url=await toPng(ref.current,{pixelRatio:2,backgroundColor:"#F4F6F9"});
       const img=new Image();img.src=url;
       await new Promise(r=>{img.onload=r});
       const w=img.width,h=img.height;
-      const pw=595.28,ph=pw*(h/w); // A4 width in pts, proportional height
-      // Minimal PDF with embedded image
+      const pw=595.28,ph=pw*(h/w);
       const win=window.open("","_blank");
       win.document.write(`<html><head><title>${name}</title><style>@media print{@page{margin:0;size:${pw}pt ${ph}pt}body{margin:0}img{width:100%}}</style></head><body><img src="${url}" style="width:100%;display:block"/><script>setTimeout(()=>window.print(),300)<\/script></body></html>`);
-    }catch(e){alert("Instale: npm install html-to-image\n\n"+e.message)}
+    }catch(e){alert("Erro ao gerar PDF: "+e.message)}
   };
 
   // Manual vessel form
