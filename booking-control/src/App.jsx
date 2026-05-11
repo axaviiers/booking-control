@@ -1387,112 +1387,106 @@ function OfertaPanel({ships,armadores,logo}){
   const toggle=id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const selectAll=ids=>setSel(p=>[...new Set([...p,...ids])]);
 
-  // ── Pure Canvas renderer (zero dependencies, never blank) ──
-  const renderCanvas=useCallback((data,title,W=800)=>{
-    const S=2,F="Helvetica,Arial,sans-serif",P="#0F4C81",Sc="#2980B9",D="#0A2A42";
+  // ── HTML real dentro de SVG foreignObject → PNG nítido ──
+  const esc=s=>(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const buildImgHTML=useCallback((data,title,W)=>{
+    const P="#0F4C81",S="#2980B9",D="#0A2A42";
     const routes=Object.entries(data);if(!routes.length)return null;
-    // Measure height
-    let totalCards=0;routes.forEach(([,items])=>{totalCards+=items.length});
-    const H=200+routes.length*60+totalCards*110+180;
-    const c=document.createElement("canvas");c.width=W;c.height=H;
-    const x=c.getContext("2d");
-    const rr=(x,y,w,h,r)=>{x.beginPath();x.moveTo(y+r,h);x.lineTo(y+w-r,h);x.quadraticCurveTo(y+w,h,y+w,h+r);x.lineTo(y+w,h+H-r);x.quadraticCurveTo(y+w,h+H,y+w-r,h+H);x.lineTo(y+r,h+H);x.quadraticCurveTo(y,h+H,y,h+H-r);x.lineTo(y,h+r);x.quadraticCurveTo(y,h,y+r,h);x.closePath()};
-    const pill=(ctx,txt,px,py,bg,fg)=>{ctx.font=`bold 14px ${F}`;const tw=ctx.measureText(txt).width+16;ctx.fillStyle=bg;ctx.beginPath();ctx.roundRect(px,py-10,tw,20,10);ctx.fill();ctx.fillStyle=fg;ctx.fillText(txt,px+8,py+4)};
-    // Background
-    x.fillStyle="#F4F6F9";x.fillRect(0,0,W,H);
-    // Header
-    x.fillStyle=P;x.fillRect(0,0,W,130);
-    x.font=`800 36px Georgia,serif`;x.fillStyle="#fff";x.textAlign="center";
-    x.fillText("Inter",W/2-50,52);x.fillStyle="#7EC8E3";x.fillText("Shipping",W/2+55,52);
-    x.font=`600 11px ${F}`;x.fillStyle="rgba(255,255,255,.4)";x.fillText("ASSESSORIA E LOGÍSTICA INTERNACIONAL",W/2,72);
-    // Title box
-    x.fillStyle="rgba(255,255,255,.08)";x.beginPath();x.roundRect(28,88,W-56,36,10);x.fill();
-    x.strokeStyle="rgba(255,255,255,.1)";x.lineWidth=1;x.beginPath();x.roundRect(28,88,W-56,36,10);x.stroke();
-    x.font=`700 10px ${F}`;x.fillStyle="#7EC8E3";x.fillText("ESPAÇOS CONFIRMADOS",W/2,102);
-    x.font=`800 18px ${F}`;x.fillStyle="#fff";x.fillText(title,W/2,120);
+    let totalCards=0;routes.forEach(([,it])=>totalCards+=it.length);
+    const H=180+routes.length*44+totalCards*80+130;
 
-    let y=145;x.textAlign="left";
+    const cardHTML=v=>{const c=aC(v.carrier);return`<div style="background:#fff;border-radius:8px;margin:0 12px 5px;overflow:hidden;border:1px solid #EDF0F4;display:flex;align-items:stretch">
+      <div style="width:4px;background:${c};flex-shrink:0"></div>
+      <div style="flex:1;padding:10px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+          <div style="font-size:13px;font-weight:700;color:#1E293B">${esc(v.vessel)}</div>
+          <span style="background:${c}15;color:${c};padding:2px 8px;border-radius:10px;font-size:8px;font-weight:700">${esc(v.carrier)}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748B">
+          <span>${esc(v.pol)} → ${esc(v.pod)}</span>
+          <span style="font-weight:700;color:${P}">ETD ${esc(v.etd)}</span>
+        </div>
+        ${(v.dlDraft||v.containers)?`<div style="display:flex;justify-content:space-between;margin-top:3px;font-size:8px">
+          <span style="color:#8896A6">${v.dlDraft?"Draft: "+esc(v.dlDraft):""}</span>
+          <span style="font-weight:700;color:${c}">${esc(v.containers||"")}</span>
+        </div>`:""}</div></div>`;};
 
-    routes.forEach(([route,items])=>{
-      // Route header
-      x.fillStyle=Sc;x.fillRect(24,y,4,24);
-      x.font=`800 16px ${F}`;x.fillStyle=P;x.fillText(route,36,y+16);
-      const rw=x.measureText(route).width;
-      x.strokeStyle="#E2E8F0";x.lineWidth=1;x.beginPath();x.moveTo(44+rw,y+12);x.lineTo(W-24,y+12);x.stroke();
-      y+=38;
+    const body=`<div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;margin:0;padding:0;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#F4F6F9">
+      <div style="background:${P};padding:24px 20px 18px;text-align:center">
+        <div style="color:#fff;font-size:22px;font-weight:800;font-family:Georgia,serif">Inter <span style="color:#7EC8E3">Shipping</span></div>
+        <div style="color:rgba(255,255,255,.35);font-size:7px;letter-spacing:3px;margin-top:3px">ASSESSORIA E LOGÍSTICA INTERNACIONAL</div>
+        <div style="margin-top:10px;background:rgba(255,255,255,.07);border-radius:8px;padding:8px 14px;border:1px solid rgba(255,255,255,.08)">
+          <div style="color:#7EC8E3;font-size:7px;font-weight:700;letter-spacing:2px">ESPAÇOS CONFIRMADOS</div>
+          <div style="color:#fff;font-size:17px;font-weight:800;margin-top:2px">${esc(title)}</div>
+        </div>
+      </div>
+      <div style="padding:12px 0 4px">
+        ${routes.map(([route,items])=>`<div style="margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:6px;margin:0 12px 6px">
+            <div style="width:3px;height:16px;border-radius:2px;background:${S}"></div>
+            <div style="font-size:11px;font-weight:800;color:${P}">${esc(route)}</div>
+            <div style="flex:1;height:1px;background:#E2E8F0"></div>
+          </div>
+          ${items.map(cardHTML).join("")}
+        </div>`).join("")}
+      </div>
+      <div style="padding:0 12px 12px">
+        <div style="background:#fff;border-radius:8px;padding:12px 14px;text-align:center;border:1px solid #EDF0F4">
+          <div style="font-size:11px;font-weight:700;color:${P}">Precisa de outra rota?</div>
+          <div style="font-size:9px;color:#8896A6;margin-top:3px">Consulte-nos — espaços para ${esc(title)}.</div>
+        </div>
+      </div>
+      <div style="background:${D};padding:12px 20px;text-align:center">
+        <div style="color:#7EC8E3;font-size:10px;font-weight:700;font-family:Georgia,serif">Inter Shipping</div>
+        <div style="color:rgba(255,255,255,.3);font-size:7px;margin-top:2px">Assessoria e Logística Internacional</div>
+      </div>
+    </div>`;
 
-      items.forEach(v=>{
-        const col=aC(v.carrier);
-        // Card bg
-        x.fillStyle="#fff";x.beginPath();x.roundRect(24,y,W-48,90,10);x.fill();
-        x.strokeStyle="#EDF0F4";x.lineWidth=1;x.beginPath();x.roundRect(24,y,W-48,90,10);x.stroke();
-        // Color accent
-        x.fillStyle=col;x.fillRect(24,y+4,5,82);
-        // Vessel name
-        x.font=`700 17px ${F}`;x.fillStyle="#1E293B";x.fillText(v.vessel,40,y+22);
-        // Armador pill
-        pill(x,v.carrier,W-24-x.measureText(v.carrier).width-28,y+18,col+"18",col);
-        // Row 2: route + ETD
-        x.font=`500 14px ${F}`;x.fillStyle="#64748B";x.fillText(`${v.pol} → ${v.pod}`,40,y+46);
-        x.font=`700 14px ${F}`;x.fillStyle=P;x.textAlign="right";x.fillText(`ETD ${v.etd}`,W-36,y+46);x.textAlign="left";
-        // Row 3: draft + type
-        if(v.dlDraft||v.containers){
-          x.font=`500 12px ${F}`;x.fillStyle="#8896A6";
-          if(v.dlDraft)x.fillText(`Draft: ${v.dlDraft}`,40,y+66);
-          if(v.containers){x.font=`700 12px ${F}`;x.fillStyle=col;x.textAlign="right";x.fillText(v.containers,W-36,y+66);x.textAlign="left"}
-        }
-        // Separator line inside card
-        x.strokeStyle="#F1F5F9";x.beginPath();x.moveTo(40,y+76);x.lineTo(W-36,y+76);x.stroke();
-        y+=100;
-      });
-      y+=10;
-    });
+    const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject width="100%" height="100%">${body}</foreignObject></svg>`;
+    return{svg,H};
+  },[]);
 
-    // CTA
-    x.fillStyle="#fff";x.beginPath();x.roundRect(24,y,W-48,60,12);x.fill();
-    x.strokeStyle="#EDF0F4";x.lineWidth=1;x.beginPath();x.roundRect(24,y,W-48,60,12);x.stroke();
-    x.font=`700 15px ${F}`;x.fillStyle=P;x.textAlign="center";x.fillText("Precisa de outra rota?",W/2,y+24);
-    x.font=`500 12px ${F}`;x.fillStyle="#8896A6";x.fillText(`Consulte-nos — espaços para ${title} em diversas rotas.`,W/2,y+44);
-    y+=74;
-
-    // Footer
-    x.fillStyle=D;x.fillRect(0,y,W,60);
-    x.font=`700 14px Georgia,serif`;x.fillStyle="#7EC8E3";x.fillText("Inter Shipping",W/2,y+24);
-    x.font=`500 10px ${F}`;x.fillStyle="rgba(255,255,255,.3)";x.fillText("Assessoria e Logística Internacional",W/2,y+40);
-    x.textAlign="left";
-
-    // Trim canvas to actual content
-    const out=document.createElement("canvas");out.width=W;out.height=y+60;
-    out.getContext("2d").drawImage(c,0,0);
-    return out;
+  const downloadPNG=useCallback((svgStr,W,H,filename,scale=2)=>{
+    const blob=new Blob([svgStr],{type:"image/svg+xml;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const img=new Image();
+    img.onload=()=>{
+      const c=document.createElement("canvas");c.width=W*scale;c.height=H*scale;
+      const ctx=c.getContext("2d");ctx.scale(scale,scale);ctx.drawImage(img,0,0,W,H);
+      c.toBlob(b=>{if(b){const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=filename;a.click();URL.revokeObjectURL(a.href)}},
+      "image/png");URL.revokeObjectURL(url);
+    };
+    img.onerror=()=>alert("Erro ao renderizar imagem");
+    img.src=url;
   },[]);
 
   const downloadWhatsApp=useCallback(()=>{
-    const c=renderCanvas(grouped,mesRef,800);
-    if(!c)return alert("Selecione ao menos um navio");
-    c.toBlob(blob=>{
-      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="espacos-whatsapp.png";a.click();
-      URL.revokeObjectURL(a.href);
-    },"image/png");
-  },[grouped,mesRef,renderCanvas]);
+    const r=buildImgHTML(grouped,mesRef,420);
+    if(!r)return alert("Selecione ao menos um navio");
+    downloadPNG(r.svg,420,r.H,"espacos-whatsapp.png",3);
+  },[grouped,mesRef,buildImgHTML,downloadPNG]);
 
   const downloadEmail=useCallback(()=>{
-    const c=renderCanvas(grouped,mesRef,1200);
-    if(!c)return alert("Selecione ao menos um navio");
-    c.toBlob(blob=>{
-      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="espacos-email.png";a.click();
-      URL.revokeObjectURL(a.href);
-    },"image/png");
-  },[grouped,mesRef,renderCanvas]);
+    const r=buildImgHTML(grouped,mesRef,680);
+    if(!r)return alert("Selecione ao menos um navio");
+    downloadPNG(r.svg,680,r.H,"espacos-email.png",2);
+  },[grouped,mesRef,buildImgHTML,downloadPNG]);
 
   const downloadPdf=useCallback(()=>{
-    const c=renderCanvas(grouped,mesRef,1200);
-    if(!c)return alert("Selecione ao menos um navio");
-    const url=c.toDataURL("image/png");
-    const pw=595.28,ph=pw*(c.height/c.width);
-    const win=window.open("","_blank");
-    win.document.write(`<html><head><title>espacos</title><style>@media print{@page{margin:0;size:${pw}pt ${ph}pt}body{margin:0}img{width:100%}}</style></head><body><img src="${url}" style="width:100%;display:block"/><script>setTimeout(()=>window.print(),300)<\/script></body></html>`);
-  },[grouped,mesRef,renderCanvas]);
+    const r=buildImgHTML(grouped,mesRef,680);
+    if(!r)return alert("Selecione ao menos um navio");
+    const blob=new Blob([r.svg],{type:"image/svg+xml;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const img=new Image();
+    img.onload=()=>{
+      const c=document.createElement("canvas");c.width=680*2;c.height=r.H*2;
+      const ctx=c.getContext("2d");ctx.scale(2,2);ctx.drawImage(img,0,0,680,r.H);
+      const d=c.toDataURL("image/png");const pw=595.28,ph=pw*(r.H/680);
+      const w=window.open("","_blank");
+      w.document.write(`<html><head><title>espacos</title><style>@media print{@page{margin:0;size:${pw}pt ${ph}pt}body{margin:0}img{width:100%}}</style></head><body><img src="${d}" style="width:100%;display:block"/><script>setTimeout(()=>window.print(),300)<\/script></body></html>`);
+      URL.revokeObjectURL(url);
+    };img.src=url;
+  },[grouped,mesRef,buildImgHTML]);
 
   // Manual vessel form
   const manualFields=[
