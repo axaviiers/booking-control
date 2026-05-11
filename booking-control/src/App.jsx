@@ -1387,28 +1387,112 @@ function OfertaPanel({ships,armadores,logo}){
   const toggle=id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const selectAll=ids=>setSel(p=>[...new Set([...p,...ids])]);
 
-  const _hti=()=>import(/* @vite-ignore */"https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/+esm");
-  const downloadImg=async(ref,name)=>{
-    if(!ref.current)return;
-    try{
-      const{toPng}=await _hti();
-      const url=await toPng(ref.current,{pixelRatio:2,backgroundColor:"#F4F6F9"});
-      const a=document.createElement("a");a.href=url;a.download=`${name}.png`;a.click();
-    }catch(e){alert("Erro ao gerar imagem: "+e.message)}
-  };
-  const downloadPdf=async(ref,name)=>{
-    if(!ref.current)return;
-    try{
-      const{toPng}=await _hti();
-      const url=await toPng(ref.current,{pixelRatio:2,backgroundColor:"#F4F6F9"});
-      const img=new Image();img.src=url;
-      await new Promise(r=>{img.onload=r});
-      const w=img.width,h=img.height;
-      const pw=595.28,ph=pw*(h/w);
-      const win=window.open("","_blank");
-      win.document.write(`<html><head><title>${name}</title><style>@media print{@page{margin:0;size:${pw}pt ${ph}pt}body{margin:0}img{width:100%}}</style></head><body><img src="${url}" style="width:100%;display:block"/><script>setTimeout(()=>window.print(),300)<\/script></body></html>`);
-    }catch(e){alert("Erro ao gerar PDF: "+e.message)}
-  };
+  // ── Pure Canvas renderer (zero dependencies, never blank) ──
+  const renderCanvas=useCallback((data,title,W=800)=>{
+    const S=2,F="Helvetica,Arial,sans-serif",P="#0F4C81",Sc="#2980B9",D="#0A2A42";
+    const routes=Object.entries(data);if(!routes.length)return null;
+    // Measure height
+    let totalCards=0;routes.forEach(([,items])=>{totalCards+=items.length});
+    const H=200+routes.length*60+totalCards*110+180;
+    const c=document.createElement("canvas");c.width=W;c.height=H;
+    const x=c.getContext("2d");
+    const rr=(x,y,w,h,r)=>{x.beginPath();x.moveTo(y+r,h);x.lineTo(y+w-r,h);x.quadraticCurveTo(y+w,h,y+w,h+r);x.lineTo(y+w,h+H-r);x.quadraticCurveTo(y+w,h+H,y+w-r,h+H);x.lineTo(y+r,h+H);x.quadraticCurveTo(y,h+H,y,h+H-r);x.lineTo(y,h+r);x.quadraticCurveTo(y,h,y+r,h);x.closePath()};
+    const pill=(ctx,txt,px,py,bg,fg)=>{ctx.font=`bold 14px ${F}`;const tw=ctx.measureText(txt).width+16;ctx.fillStyle=bg;ctx.beginPath();ctx.roundRect(px,py-10,tw,20,10);ctx.fill();ctx.fillStyle=fg;ctx.fillText(txt,px+8,py+4)};
+    // Background
+    x.fillStyle="#F4F6F9";x.fillRect(0,0,W,H);
+    // Header
+    x.fillStyle=P;x.fillRect(0,0,W,130);
+    x.font=`800 36px Georgia,serif`;x.fillStyle="#fff";x.textAlign="center";
+    x.fillText("Inter",W/2-50,52);x.fillStyle="#7EC8E3";x.fillText("Shipping",W/2+55,52);
+    x.font=`600 11px ${F}`;x.fillStyle="rgba(255,255,255,.4)";x.fillText("ASSESSORIA E LOGÍSTICA INTERNACIONAL",W/2,72);
+    // Title box
+    x.fillStyle="rgba(255,255,255,.08)";x.beginPath();x.roundRect(28,88,W-56,36,10);x.fill();
+    x.strokeStyle="rgba(255,255,255,.1)";x.lineWidth=1;x.beginPath();x.roundRect(28,88,W-56,36,10);x.stroke();
+    x.font=`700 10px ${F}`;x.fillStyle="#7EC8E3";x.fillText("ESPAÇOS CONFIRMADOS",W/2,102);
+    x.font=`800 18px ${F}`;x.fillStyle="#fff";x.fillText(title,W/2,120);
+
+    let y=145;x.textAlign="left";
+
+    routes.forEach(([route,items])=>{
+      // Route header
+      x.fillStyle=Sc;x.fillRect(24,y,4,24);
+      x.font=`800 16px ${F}`;x.fillStyle=P;x.fillText(route,36,y+16);
+      const rw=x.measureText(route).width;
+      x.strokeStyle="#E2E8F0";x.lineWidth=1;x.beginPath();x.moveTo(44+rw,y+12);x.lineTo(W-24,y+12);x.stroke();
+      y+=38;
+
+      items.forEach(v=>{
+        const col=aC(v.carrier);
+        // Card bg
+        x.fillStyle="#fff";x.beginPath();x.roundRect(24,y,W-48,90,10);x.fill();
+        x.strokeStyle="#EDF0F4";x.lineWidth=1;x.beginPath();x.roundRect(24,y,W-48,90,10);x.stroke();
+        // Color accent
+        x.fillStyle=col;x.fillRect(24,y+4,5,82);
+        // Vessel name
+        x.font=`700 17px ${F}`;x.fillStyle="#1E293B";x.fillText(v.vessel,40,y+22);
+        // Armador pill
+        pill(x,v.carrier,W-24-x.measureText(v.carrier).width-28,y+18,col+"18",col);
+        // Row 2: route + ETD
+        x.font=`500 14px ${F}`;x.fillStyle="#64748B";x.fillText(`${v.pol} → ${v.pod}`,40,y+46);
+        x.font=`700 14px ${F}`;x.fillStyle=P;x.textAlign="right";x.fillText(`ETD ${v.etd}`,W-36,y+46);x.textAlign="left";
+        // Row 3: draft + type
+        if(v.dlDraft||v.containers){
+          x.font=`500 12px ${F}`;x.fillStyle="#8896A6";
+          if(v.dlDraft)x.fillText(`Draft: ${v.dlDraft}`,40,y+66);
+          if(v.containers){x.font=`700 12px ${F}`;x.fillStyle=col;x.textAlign="right";x.fillText(v.containers,W-36,y+66);x.textAlign="left"}
+        }
+        // Separator line inside card
+        x.strokeStyle="#F1F5F9";x.beginPath();x.moveTo(40,y+76);x.lineTo(W-36,y+76);x.stroke();
+        y+=100;
+      });
+      y+=10;
+    });
+
+    // CTA
+    x.fillStyle="#fff";x.beginPath();x.roundRect(24,y,W-48,60,12);x.fill();
+    x.strokeStyle="#EDF0F4";x.lineWidth=1;x.beginPath();x.roundRect(24,y,W-48,60,12);x.stroke();
+    x.font=`700 15px ${F}`;x.fillStyle=P;x.textAlign="center";x.fillText("Precisa de outra rota?",W/2,y+24);
+    x.font=`500 12px ${F}`;x.fillStyle="#8896A6";x.fillText(`Consulte-nos — espaços para ${title} em diversas rotas.`,W/2,y+44);
+    y+=74;
+
+    // Footer
+    x.fillStyle=D;x.fillRect(0,y,W,60);
+    x.font=`700 14px Georgia,serif`;x.fillStyle="#7EC8E3";x.fillText("Inter Shipping",W/2,y+24);
+    x.font=`500 10px ${F}`;x.fillStyle="rgba(255,255,255,.3)";x.fillText("Assessoria e Logística Internacional",W/2,y+40);
+    x.textAlign="left";
+
+    // Trim canvas to actual content
+    const out=document.createElement("canvas");out.width=W;out.height=y+60;
+    out.getContext("2d").drawImage(c,0,0);
+    return out;
+  },[]);
+
+  const downloadWhatsApp=useCallback(()=>{
+    const c=renderCanvas(grouped,mesRef,800);
+    if(!c)return alert("Selecione ao menos um navio");
+    c.toBlob(blob=>{
+      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="espacos-whatsapp.png";a.click();
+      URL.revokeObjectURL(a.href);
+    },"image/png");
+  },[grouped,mesRef,renderCanvas]);
+
+  const downloadEmail=useCallback(()=>{
+    const c=renderCanvas(grouped,mesRef,1200);
+    if(!c)return alert("Selecione ao menos um navio");
+    c.toBlob(blob=>{
+      const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="espacos-email.png";a.click();
+      URL.revokeObjectURL(a.href);
+    },"image/png");
+  },[grouped,mesRef,renderCanvas]);
+
+  const downloadPdf=useCallback(()=>{
+    const c=renderCanvas(grouped,mesRef,1200);
+    if(!c)return alert("Selecione ao menos um navio");
+    const url=c.toDataURL("image/png");
+    const pw=595.28,ph=pw*(c.height/c.width);
+    const win=window.open("","_blank");
+    win.document.write(`<html><head><title>espacos</title><style>@media print{@page{margin:0;size:${pw}pt ${ph}pt}body{margin:0}img{width:100%}}</style></head><body><img src="${url}" style="width:100%;display:block"/><script>setTimeout(()=>window.print(),300)<\/script></body></html>`);
+  },[grouped,mesRef,renderCanvas]);
 
   // Manual vessel form
   const manualFields=[
@@ -1527,8 +1611,8 @@ function OfertaPanel({ships,armadores,logo}){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <p style={{fontSize:12,color:"#64748B"}}>{totalRows} itens · {Object.keys(grouped).length} rota(s)</p>
         <div style={{display:"flex",gap:6}}>
-          <button onClick={()=>downloadImg(emailRef,"espacos-email")} style={{...bP,background:BRAND,display:"flex",alignItems:"center",gap:6}}>📷 Baixar PNG</button>
-          <button onClick={()=>downloadPdf(emailRef,"espacos-email")} style={{...bP,background:"#DC2626",display:"flex",alignItems:"center",gap:6}}>📄 Baixar PDF</button>
+          <button onClick={downloadEmail} style={{...bP,background:BRAND,display:"flex",alignItems:"center",gap:6}}>📷 Baixar PNG</button>
+          <button onClick={downloadPdf} style={{...bP,background:"#DC2626",display:"flex",alignItems:"center",gap:6}}>📄 Baixar PDF</button>
         </div>
       </div>
       <div style={{background:"#E2E8F0",padding:20,borderRadius:12}}>
@@ -1542,7 +1626,7 @@ function OfertaPanel({ships,armadores,logo}){
     {SubNav}
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
       <p style={{fontSize:12,color:"#64748B"}}>{totalRows} itens · {Object.keys(grouped).length} rota(s)</p>
-      <button onClick={()=>downloadImg(whatsRef,"espacos-whatsapp")} style={{...bP,background:"#7C3AED",display:"flex",alignItems:"center",gap:6}}>📷 Baixar Imagem</button>
+      <button onClick={downloadWhatsApp} style={{...bP,background:"#7C3AED",display:"flex",alignItems:"center",gap:6}}>📷 Baixar Imagem</button>
     </div>
     <div style={{background:"#E2E8F0",padding:20,borderRadius:12,display:"flex",justifyContent:"center"}}>
       <OfertaWhatsPreview grouped={grouped} mesRef={mesRef} logo={logo} ref2={whatsRef}/>
