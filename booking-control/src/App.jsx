@@ -1387,17 +1387,27 @@ function OfertaPanel({ships,armadores,logo}){
   const toggle=id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const selectAll=ids=>setSel(p=>[...new Set([...p,...ids])]);
 
-  const copyHtml=async(ref)=>{
+  const downloadImg=async(ref,name)=>{
     if(!ref.current)return;
     try{
-      const html=ref.current.outerHTML;
-      await navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([html],{type:"text/html"}),"text/plain":new Blob([html],{type:"text/plain"})})]);
-      alert("HTML copiado! Cole no e-mail ou documento.");
-    }catch{
-      const range=document.createRange();range.selectNodeContents(ref.current);
-      const s=window.getSelection();s.removeAllRanges();s.addRange(range);document.execCommand("copy");
-      alert("Conteúdo copiado!");
-    }
+      const{toPng}=await import("html-to-image");
+      const url=await toPng(ref.current,{pixelRatio:2,backgroundColor:"#F4F6F9"});
+      const a=document.createElement("a");a.href=url;a.download=`${name}.png`;a.click();
+    }catch(e){alert("Instale: npm install html-to-image\n\n"+e.message)}
+  };
+  const downloadPdf=async(ref,name)=>{
+    if(!ref.current)return;
+    try{
+      const{toPng}=await import("html-to-image");
+      const url=await toPng(ref.current,{pixelRatio:2,backgroundColor:"#F4F6F9"});
+      const img=new Image();img.src=url;
+      await new Promise(r=>{img.onload=r});
+      const w=img.width,h=img.height;
+      const pw=595.28,ph=pw*(h/w); // A4 width in pts, proportional height
+      // Minimal PDF with embedded image
+      const win=window.open("","_blank");
+      win.document.write(`<html><head><title>${name}</title><style>@media print{@page{margin:0;size:${pw}pt ${ph}pt}body{margin:0}img{width:100%}}</style></head><body><img src="${url}" style="width:100%;display:block"/><script>setTimeout(()=>window.print(),300)<\/script></body></html>`);
+    }catch(e){alert("Instale: npm install html-to-image\n\n"+e.message)}
   };
 
   // Manual vessel form
@@ -1516,7 +1526,10 @@ function OfertaPanel({ships,armadores,logo}){
       {SubNav}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <p style={{fontSize:12,color:"#64748B"}}>{totalRows} itens · {Object.keys(grouped).length} rota(s)</p>
-        <button onClick={()=>copyHtml(emailRef)} style={{...bP,background:BRAND,display:"flex",alignItems:"center",gap:6}}>📋 Copiar HTML</button>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={()=>downloadImg(emailRef,"espacos-email")} style={{...bP,background:BRAND,display:"flex",alignItems:"center",gap:6}}>📷 Baixar PNG</button>
+          <button onClick={()=>downloadPdf(emailRef,"espacos-email")} style={{...bP,background:"#DC2626",display:"flex",alignItems:"center",gap:6}}>📄 Baixar PDF</button>
+        </div>
       </div>
       <div style={{background:"#E2E8F0",padding:20,borderRadius:12}}>
         <OfertaEmailPreview grouped={grouped} mesRef={mesRef} logo={logo} ref2={emailRef}/>
@@ -1529,7 +1542,7 @@ function OfertaPanel({ships,armadores,logo}){
     {SubNav}
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
       <p style={{fontSize:12,color:"#64748B"}}>{totalRows} itens · {Object.keys(grouped).length} rota(s)</p>
-      <button onClick={()=>copyHtml(whatsRef)} style={{...bP,background:"#7C3AED",display:"flex",alignItems:"center",gap:6}}>📋 Copiar HTML</button>
+      <button onClick={()=>downloadImg(whatsRef,"espacos-whatsapp")} style={{...bP,background:"#7C3AED",display:"flex",alignItems:"center",gap:6}}>📷 Baixar Imagem</button>
     </div>
     <div style={{background:"#E2E8F0",padding:20,borderRadius:12,display:"flex",justifyContent:"center"}}>
       <OfertaWhatsPreview grouped={grouped} mesRef={mesRef} logo={logo} ref2={whatsRef}/>
