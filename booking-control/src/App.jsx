@@ -1387,106 +1387,102 @@ function OfertaPanel({ships,armadores,logo}){
   const toggle=id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const selectAll=ids=>setSel(p=>[...new Set([...p,...ids])]);
 
-  // ── HTML real dentro de SVG foreignObject → PNG nítido ──
-  const esc=s=>(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  const buildImgHTML=useCallback((data,title,W)=>{
+  // ── Gera HTML → abre janela com html2canvas (CDN) → baixa PNG automaticamente ──
+  const buildOfertaHTML=useCallback((data,title,W)=>{
     const P="#0F4C81",S="#2980B9",D="#0A2A42";
     const routes=Object.entries(data);if(!routes.length)return null;
-    let totalCards=0;routes.forEach(([,it])=>totalCards+=it.length);
-    const H=180+routes.length*44+totalCards*80+130;
-
-    const cardHTML=v=>{const c=aC(v.carrier);return`<div style="background:#fff;border-radius:8px;margin:0 12px 5px;overflow:hidden;border:1px solid #EDF0F4;display:flex;align-items:stretch">
-      <div style="width:4px;background:${c};flex-shrink:0"></div>
-      <div style="flex:1;padding:10px 14px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-          <div style="font-size:13px;font-weight:700;color:#1E293B">${esc(v.vessel)}</div>
-          <span style="background:${c}15;color:${c};padding:2px 8px;border-radius:10px;font-size:8px;font-weight:700">${esc(v.carrier)}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748B">
-          <span>${esc(v.pol)} → ${esc(v.pod)}</span>
-          <span style="font-weight:700;color:${P}">ETD ${esc(v.etd)}</span>
-        </div>
-        ${(v.dlDraft||v.containers)?`<div style="display:flex;justify-content:space-between;margin-top:3px;font-size:8px">
-          <span style="color:#8896A6">${v.dlDraft?"Draft: "+esc(v.dlDraft):""}</span>
-          <span style="font-weight:700;color:${c}">${esc(v.containers||"")}</span>
-        </div>`:""}</div></div>`;};
-
-    const body=`<div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;margin:0;padding:0;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#F4F6F9">
-      <div style="background:${P};padding:24px 20px 18px;text-align:center">
-        <div style="color:#fff;font-size:22px;font-weight:800;font-family:Georgia,serif">Inter <span style="color:#7EC8E3">Shipping</span></div>
-        <div style="color:rgba(255,255,255,.35);font-size:7px;letter-spacing:3px;margin-top:3px">ASSESSORIA E LOGÍSTICA INTERNACIONAL</div>
-        <div style="margin-top:10px;background:rgba(255,255,255,.07);border-radius:8px;padding:8px 14px;border:1px solid rgba(255,255,255,.08)">
-          <div style="color:#7EC8E3;font-size:7px;font-weight:700;letter-spacing:2px">ESPAÇOS CONFIRMADOS</div>
-          <div style="color:#fff;font-size:17px;font-weight:800;margin-top:2px">${esc(title)}</div>
-        </div>
-      </div>
-      <div style="padding:12px 0 4px">
-        ${routes.map(([route,items])=>`<div style="margin-bottom:12px">
-          <div style="display:flex;align-items:center;gap:6px;margin:0 12px 6px">
-            <div style="width:3px;height:16px;border-radius:2px;background:${S}"></div>
-            <div style="font-size:11px;font-weight:800;color:${P}">${esc(route)}</div>
-            <div style="flex:1;height:1px;background:#E2E8F0"></div>
+    const esc=s=>(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    const cardH=v=>{const c=aC(v.carrier);return`
+      <div style="background:#fff;border-radius:8px;margin:0 12px 5px;overflow:hidden;border:1px solid #EDF0F4;display:flex;align-items:stretch">
+        <div style="width:4px;background:${c}"></div>
+        <div style="flex:1;padding:10px 14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+            <div style="font-size:${W>500?14:13}px;font-weight:700;color:#1E293B">${esc(v.vessel)}</div>
+            <span style="background:${c}15;color:${c};padding:2px 8px;border-radius:10px;font-size:${W>500?9:8}px;font-weight:700">${esc(v.carrier)}</span>
           </div>
-          ${items.map(cardHTML).join("")}
-        </div>`).join("")}
-      </div>
-      <div style="padding:0 12px 12px">
-        <div style="background:#fff;border-radius:8px;padding:12px 14px;text-align:center;border:1px solid #EDF0F4">
-          <div style="font-size:11px;font-weight:700;color:${P}">Precisa de outra rota?</div>
-          <div style="font-size:9px;color:#8896A6;margin-top:3px">Consulte-nos — espaços para ${esc(title)}.</div>
+          <div style="display:flex;justify-content:space-between;font-size:${W>500?11:10}px;color:#64748B">
+            <span>${esc(v.pol)} → ${esc(v.pod)}</span>
+            <span style="font-weight:700;color:${P}">ETD ${esc(v.etd)}</span>
+          </div>
+          ${(v.dlDraft||v.containers)?`<div style="display:flex;justify-content:space-between;margin-top:3px;font-size:${W>500?9:8}px">
+            <span style="color:#8896A6">${v.dlDraft?"Draft: "+esc(v.dlDraft):""}</span>
+            <span style="font-weight:700;color:${c}">${esc(v.containers||"")}</span>
+          </div>`:""}</div></div>`;};
+    return`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=${W}"><style>*{margin:0;padding:0;box-sizing:border-box}body{width:${W}px;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#F4F6F9}</style></head><body>
+      <div id="capture" style="width:${W}px">
+        <div style="background:${P};padding:24px 20px 18px;text-align:center">
+          <div style="color:#fff;font-size:${W>500?24:20}px;font-weight:800;font-family:Georgia,serif">Inter <span style="color:#7EC8E3">Shipping</span></div>
+          <div style="color:rgba(255,255,255,.35);font-size:7px;letter-spacing:3px;margin-top:3px">ASSESSORIA E LOGÍSTICA INTERNACIONAL</div>
+          <div style="margin-top:10px;background:rgba(255,255,255,.07);border-radius:8px;padding:8px 14px;border:1px solid rgba(255,255,255,.08)">
+            <div style="color:#7EC8E3;font-size:7px;font-weight:700;letter-spacing:2px">ESPAÇOS CONFIRMADOS</div>
+            <div style="color:#fff;font-size:${W>500?18:16}px;font-weight:800;margin-top:2px">${esc(title)}</div>
+          </div>
+        </div>
+        <div style="padding:12px 0 4px">
+          ${routes.map(([route,items])=>`<div style="margin-bottom:12px">
+            <div style="display:flex;align-items:center;gap:6px;margin:0 12px 6px">
+              <div style="width:3px;height:16px;border-radius:2px;background:${S}"></div>
+              <div style="font-size:11px;font-weight:800;color:${P}">${esc(route)}</div>
+              <div style="flex:1;height:1px;background:#E2E8F0"></div>
+            </div>
+            ${items.map(cardH).join("")}
+          </div>`).join("")}
+        </div>
+        <div style="padding:0 12px 12px">
+          <div style="background:#fff;border-radius:8px;padding:12px 14px;text-align:center;border:1px solid #EDF0F4">
+            <div style="font-size:11px;font-weight:700;color:${P}">Precisa de outra rota?</div>
+            <div style="font-size:9px;color:#8896A6;margin-top:3px">Consulte-nos — espaços para ${esc(title)}.</div>
+          </div>
+        </div>
+        <div style="background:${D};padding:12px 20px;text-align:center">
+          <div style="color:#7EC8E3;font-size:10px;font-weight:700;font-family:Georgia,serif">Inter Shipping</div>
+          <div style="color:rgba(255,255,255,.3);font-size:7px;margin-top:2px">Assessoria e Logística Internacional</div>
         </div>
       </div>
-      <div style="background:${D};padding:12px 20px;text-align:center">
-        <div style="color:#7EC8E3;font-size:10px;font-weight:700;font-family:Georgia,serif">Inter Shipping</div>
-        <div style="color:rgba(255,255,255,.3);font-size:7px;margin-top:2px">Assessoria e Logística Internacional</div>
-      </div>
-    </div>`;
-
-    const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject width="100%" height="100%">${body}</foreignObject></svg>`;
-    return{svg,H};
+    </body></html>`;
   },[]);
 
-  const downloadPNG=useCallback((svgStr,W,H,filename,scale=2)=>{
-    const blob=new Blob([svgStr],{type:"image/svg+xml;charset=utf-8"});
-    const url=URL.createObjectURL(blob);
-    const img=new Image();
-    img.onload=()=>{
-      const c=document.createElement("canvas");c.width=W*scale;c.height=H*scale;
-      const ctx=c.getContext("2d");ctx.scale(scale,scale);ctx.drawImage(img,0,0,W,H);
-      c.toBlob(b=>{if(b){const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=filename;a.click();URL.revokeObjectURL(a.href)}},
-      "image/png");URL.revokeObjectURL(url);
+  const openAndDownload=useCallback((htmlDoc,filename,scale=2)=>{
+    const win=window.open("","_blank");
+    if(!win){alert("Permita pop-ups para baixar a imagem.");return}
+    win.document.write(htmlDoc);
+    win.document.close();
+    const scr=win.document.createElement("script");
+    scr.src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+    scr.onload=()=>{
+      setTimeout(()=>{
+        win.html2canvas(win.document.getElementById("capture"),{scale,useCORS:true,backgroundColor:"#F4F6F9"}).then(canvas=>{
+          canvas.toBlob(blob=>{
+            const a=win.document.createElement("a");a.href=URL.createObjectURL(blob);a.download=filename;a.click();
+            setTimeout(()=>win.close(),500);
+          },"image/png");
+        }).catch(()=>{win.document.title="Salve com Print Screen ou Ctrl+P";});
+      },300);
     };
-    img.onerror=()=>alert("Erro ao renderizar imagem");
-    img.src=url;
+    win.document.head.appendChild(scr);
   },[]);
 
   const downloadWhatsApp=useCallback(()=>{
-    const r=buildImgHTML(grouped,mesRef,420);
-    if(!r)return alert("Selecione ao menos um navio");
-    downloadPNG(r.svg,420,r.H,"espacos-whatsapp.png",3);
-  },[grouped,mesRef,buildImgHTML,downloadPNG]);
+    const html=buildOfertaHTML(grouped,mesRef,420);
+    if(!html)return alert("Selecione ao menos um navio");
+    openAndDownload(html,"espacos-whatsapp.png",3);
+  },[grouped,mesRef,buildOfertaHTML,openAndDownload]);
 
   const downloadEmail=useCallback(()=>{
-    const r=buildImgHTML(grouped,mesRef,680);
-    if(!r)return alert("Selecione ao menos um navio");
-    downloadPNG(r.svg,680,r.H,"espacos-email.png",2);
-  },[grouped,mesRef,buildImgHTML,downloadPNG]);
+    const html=buildOfertaHTML(grouped,mesRef,680);
+    if(!html)return alert("Selecione ao menos um navio");
+    openAndDownload(html,"espacos-email.png",2);
+  },[grouped,mesRef,buildOfertaHTML,openAndDownload]);
 
   const downloadPdf=useCallback(()=>{
-    const r=buildImgHTML(grouped,mesRef,680);
-    if(!r)return alert("Selecione ao menos um navio");
-    const blob=new Blob([r.svg],{type:"image/svg+xml;charset=utf-8"});
-    const url=URL.createObjectURL(blob);
-    const img=new Image();
-    img.onload=()=>{
-      const c=document.createElement("canvas");c.width=680*2;c.height=r.H*2;
-      const ctx=c.getContext("2d");ctx.scale(2,2);ctx.drawImage(img,0,0,680,r.H);
-      const d=c.toDataURL("image/png");const pw=595.28,ph=pw*(r.H/680);
-      const w=window.open("","_blank");
-      w.document.write(`<html><head><title>espacos</title><style>@media print{@page{margin:0;size:${pw}pt ${ph}pt}body{margin:0}img{width:100%}}</style></head><body><img src="${d}" style="width:100%;display:block"/><script>setTimeout(()=>window.print(),300)<\/script></body></html>`);
-      URL.revokeObjectURL(url);
-    };img.src=url;
-  },[grouped,mesRef,buildImgHTML]);
+    const html=buildOfertaHTML(grouped,mesRef,680);
+    if(!html)return alert("Selecione ao menos um navio");
+    const win=window.open("","_blank");
+    if(!win){alert("Permita pop-ups.");return}
+    win.document.write(html.replace("</body>",`<style>@media print{@page{margin:0}body{width:680px}}</style><script>setTimeout(()=>window.print(),500)<\/script></body>`));
+    win.document.close();
+  },[grouped,mesRef,buildOfertaHTML]);
+
 
   // Manual vessel form
   const manualFields=[
