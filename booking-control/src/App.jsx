@@ -35,6 +35,7 @@ const TABS=[
   {id:"bookings",label:"Bookings",icon:"📦",c:"#1D4ED8",bg:"#EFF6FF"},
   {id:"pendencias",label:"Pendências",icon:"⚠️",c:"#B45309",bg:"#FFF7ED"},
   {id:"standby",label:"Stand-by",icon:"🚢",c:"#0F766E",bg:"#F0FDFA"},
+  {id:"oferta",label:"Oferta",icon:"📢",c:"#0F4C81",bg:"#E8F0F8"},
   {id:"lixeira",label:"Lixeira",icon:"🗑",c:"#64748B",bg:"#F8FAFC"},
 ];
 const AClr={"MSC":"#1D4ED8","Maersk":"#0F766E","CMA CGM":"#B45309","Hapag-Lloyd":"#DC2626","COSCO":"#7C3AED","Evergreen":"#047857","ONE":"#BE185D","HMM":"#0369A1","Yang Ming":"#A16207","ZIM":"#6D28D9"};
@@ -1336,6 +1337,326 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
 }
 
 // ═════════════════════════════════════════════
+// OFERTA PANEL — Gerador de e-mail / WhatsApp
+// Puxa navios do stand-by, seleciona e exporta
+// ═════════════════════════════════════════════
+function OfertaPanel({ships,armadores,logo}){
+  const[sub,setSub]=useState("selecionar"); // selecionar | email | whatsapp
+  const[sel,setSel]=useState([]);
+  const[filterArm,setFilterArm]=useState("all");
+  const[mesRef,setMesRef]=useState("MAIO / JUNHO 2026");
+  const[manual,setManual]=useState([]);
+  const[editManual,setEditManual]=useState(null);
+  const emailRef=useRef(null);
+  const whatsRef=useRef(null);
+
+  const activeShips=useMemo(()=>(ships||[]).filter(s=>!s._purged).map(s=>({...s,bookings:(s.bookings||[]).filter(b=>!b._purged)})).sort((a,b)=>{
+    const da=a.previsaoSaida?pD(a.previsaoSaida).getTime():Infinity;
+    const db=b.previsaoSaida?pD(b.previsaoSaida).getTime():Infinity;
+    return da-db;
+  }),[ships]);
+
+  const arms=useMemo(()=>[...new Set(activeShips.map(s=>s.armador))].sort(),[activeShips]);
+  const filtered=filterArm==="all"?activeShips:activeShips.filter(s=>s.armador===filterArm);
+
+  // Build preview data — strip quantity (e.g. "10x40 HC" → "40 HC") so client doesn't see how many
+  const stripQty=s=>{if(!s)return"";return s.replace(/^\d+\s*[xX×]\s*/,"").trim()};
+  const grouped=useMemo(()=>{
+    const rows=[];
+    activeShips.filter(s=>sel.includes(s.id)).forEach(ship=>{
+      const bkgs=ship.bookings||[];
+      const etd=ship.previsaoSaida?pD(ship.previsaoSaida)?.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric"}):"";
+      const route=ship.pod?.toUpperCase()||"OUTROS";
+      if(!bkgs.length){
+        rows.push({carrier:ship.armador,vessel:ship.nome,pol:ship.pol||"SSZ",pod:ship.pod||"",transit:"",via:"",etd,dlDraft:"",dlCarga:"",containers:"",route});
+      }else{
+        bkgs.forEach(b=>{
+          rows.push({carrier:ship.armador,vessel:ship.nome,pol:b.pol||ship.pol||"SSZ",pod:b.pod||ship.pod||"",transit:"",via:"",etd,
+            dlDraft:b.deadlineCarga?fD(b.deadlineCarga):"",dlCarga:b.deadlineCarga?fD(b.deadlineCarga):"",
+            containers:stripQty(b.tipoCntr),route,client:b.client||""});
+        });
+      }
+    });
+    manual.forEach(v=>rows.push({...v,route:v.route||v.pod?.toUpperCase()||"OUTROS"}));
+    const g={};
+    rows.forEach(r=>{const k=r.route||"OUTROS";if(!g[k])g[k]=[];g[k].push(r)});
+    return g;
+  },[activeShips,sel,manual]);
+
+  const totalRows=Object.values(grouped).reduce((s,a)=>s+a.length,0);
+  const toggle=id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  const selectAll=ids=>setSel(p=>[...new Set([...p,...ids])]);
+
+  const copyHtml=async(ref)=>{
+    if(!ref.current)return;
+    try{
+      const html=ref.current.outerHTML;
+      await navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([html],{type:"text/html"}),"text/plain":new Blob([html],{type:"text/plain"})})]);
+      alert("HTML copiado! Cole no e-mail ou documento.");
+    }catch{
+      const range=document.createRange();range.selectNodeContents(ref.current);
+      const s=window.getSelection();s.removeAllRanges();s.addRange(range);document.execCommand("copy");
+      alert("Conteúdo copiado!");
+    }
+  };
+
+  // Manual vessel form
+  const manualFields=[
+    {key:"carrier",label:"Armador",type:"select",options:armadores.map(a=>a.name)},
+    {key:"vessel",label:"Navio"},{key:"route",label:"Rota (agrupamento)"},{key:"pol",label:"POL"},
+    {key:"pod",label:"POD"},{key:"transit",label:"Transit Time"},{key:"via",label:"Via"},
+    {key:"etd",label:"ETD"},{key:"dlDraft",label:"DL Draft"},{key:"dlCarga",label:"DL Carga"},
+    {key:"containers",label:"Containers"},
+  ];
+  const saveManual=f=>{
+    if(f.id){setManual(p=>p.map(v=>v.id===f.id?f:v))}
+    else{setManual(p=>[...p,{...f,id:`MAN-${Date.now()}`}])}
+    setEditManual(null);
+  };
+
+  // Sub-nav
+  const SubNav=(
+    <div style={{display:"flex",gap:6,marginBottom:16,borderBottom:"1px solid #E2E8F0"}}>
+      {[{id:"selecionar",label:"✅ Selecionar Navios",c:"#0F766E"},{id:"email",label:"📧 E-mail",c:"#1D4ED8"},{id:"whatsapp",label:"📱 WhatsApp",c:"#7C3AED"}].map(t=>{
+        const a=sub===t.id;
+        return(<button key={t.id} onClick={()=>setSub(t.id)} style={{padding:"9px 18px",borderRadius:"8px 8px 0 0",border:a?`2px solid ${t.c}`:"2px solid transparent",borderBottom:a?"2px solid #fff":"2px solid transparent",background:a?`${t.c}10`:"transparent",color:a?t.c:"#94A3B8",fontSize:12,fontWeight:a?700:500,cursor:"pointer",fontFamily:"inherit",marginBottom:"-1px",display:"flex",alignItems:"center",gap:6}}>{t.label}{t.id==="selecionar"&&sel.length>0&&<span style={{padding:"1px 6px",borderRadius:8,background:a?t.c:"#E2E8F0",color:a?"#fff":"#94A3B8",fontSize:9,fontWeight:700}}>{sel.length}</span>}</button>);
+      })}
+    </div>
+  );
+
+  // ── SELECIONAR ──
+  if(sub==="selecionar"){
+    return(<div>
+      {SubNav}
+      {/* Stats */}
+      <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{padding:"8px 16px",borderRadius:10,background:"#F0FDFA",border:"1px solid #99F6E4",textAlign:"center"}}><p style={{fontSize:18,fontWeight:700,color:"#0F766E"}}>{activeShips.length}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#115E59"}}>Navios</p></div>
+        <div style={{padding:"8px 16px",borderRadius:10,background:"#DBEAFE",border:"1px solid #BFDBFE",textAlign:"center"}}><p style={{fontSize:18,fontWeight:700,color:"#1D4ED8"}}>{sel.length}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#1E40AF"}}>Selecionados</p></div>
+        <div style={{padding:"8px 16px",borderRadius:10,background:"#FEF3C7",border:"1px solid #FDE68A",textAlign:"center"}}><p style={{fontSize:18,fontWeight:700,color:"#B45309"}}>{totalRows}</p><p style={{fontSize:8,fontWeight:600,textTransform:"uppercase",color:"#92400E"}}>No Preview</p></div>
+        <div style={{flex:1}}/>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <label style={{fontSize:10,fontWeight:600,color:"#64748B"}}>Título:</label>
+          <input value={mesRef} onChange={e=>setMesRef(e.target.value)} style={{...iS,width:200,padding:"6px 10px"}}/>
+        </div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16}}>
+        {/* Ship list */}
+        <div style={{background:"#fff",borderRadius:12,padding:16,border:"1px solid #E2E8F0"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <h3 style={{fontSize:14,fontWeight:700,color:BRAND}}>Navios do Stand-by</h3>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>selectAll(filtered.map(s=>s.id))} style={{padding:"5px 12px",borderRadius:6,border:"1px solid #99F6E4",background:"#F0FDFA",color:"#0F766E",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✅ Todos ({filtered.length})</button>
+              <button onClick={()=>setSel([])} style={{padding:"5px 12px",borderRadius:6,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Limpar</button>
+            </div>
+          </div>
+
+          {/* Armador filter */}
+          <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:12}}>
+            <button onClick={()=>setFilterArm("all")} style={{padding:"4px 10px",borderRadius:6,border:filterArm==="all"?"none":"1px solid #E2E8F0",background:filterArm==="all"?BRAND:"#fff",color:filterArm==="all"?"#fff":"#94A3B8",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Todos</button>
+            {arms.map(arm=>{const c=aC(arm);const cnt=activeShips.filter(s=>s.armador===arm).length;return(
+              <button key={arm} onClick={()=>setFilterArm(arm)} style={{padding:"4px 10px",borderRadius:6,border:filterArm===arm?`2px solid ${c}`:"1px solid #E2E8F0",background:filterArm===arm?`${c}10`:"#fff",color:filterArm===arm?c:"#94A3B8",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                <span style={{display:"inline-block",width:6,height:6,borderRadius:2,background:c,marginRight:3,verticalAlign:"middle"}}/>{arm} ({cnt})
+              </button>);
+            })}
+          </div>
+
+          {/* Ship rows */}
+          <div style={{maxHeight:480,overflowY:"auto"}}>
+            {filtered.map(ship=>{
+              const c=aC(ship.armador);const bkgs=ship.bookings||[];const isSel=sel.includes(ship.id);
+              const etd=ship.previsaoSaida?pD(ship.previsaoSaida)?.toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}):"—";
+              return(<div key={ship.id} onClick={()=>toggle(ship.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:isSel?`${c}08`:"#fff",borderRadius:8,border:isSel?`2px solid ${c}`:"1px solid #F1F5F9",cursor:"pointer",marginBottom:4,transition:"all .15s"}}>
+                <div style={{width:20,height:20,borderRadius:5,flexShrink:0,border:isSel?`2px solid ${c}`:"2px solid #CBD5E1",background:isSel?c:"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {isSel&&<span style={{color:"#fff",fontSize:11,fontWeight:700}}>✓</span>}
+                </div>
+                <span style={{background:c,color:"#fff",padding:"1px 5px",borderRadius:3,fontSize:8,fontWeight:700}}>{ship.armador}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <span style={{fontSize:12,fontWeight:700,color:"#1E293B"}}>{ship.nome}</span>
+                  <span style={{fontSize:10,color:"#94A3B8",marginLeft:6}}>{ship.pol}→{ship.pod} · ETD {etd}</span>
+                </div>
+                {bkgs.map(b=>{const s=(b.qtdDisponivel||b.qtdTotal||0)-(b.qtdUsando||0);return(
+                  <span key={b.id} style={{padding:"2px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:s>0?"#D1FAE5":"#FEE2E2",color:s>0?"#047857":"#DC2626"}}>{s>0?`+${s}`:s} {b.tipoCntr||""}</span>
+                );})}
+                {!bkgs.length&&<span style={{fontSize:9,color:"#CBD5E1",fontStyle:"italic"}}>sem bkgs</span>}
+              </div>);
+            })}
+            {!filtered.length&&<p style={{padding:24,textAlign:"center",color:"#CBD5E1",fontSize:12}}>Nenhum navio neste armador</p>}
+          </div>
+        </div>
+
+        {/* Manual sidebar */}
+        <div style={{background:"#fff",borderRadius:12,padding:16,border:"1px solid #E2E8F0"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <h3 style={{fontSize:13,fontWeight:700,color:BRAND}}>✏️ Manuais</h3>
+            <button onClick={()=>setEditManual({id:0,carrier:armadores[0]?.name||"",vessel:"",pol:"Santos",pod:"",transit:"",via:"",etd:"",dlDraft:"",dlCarga:"",containers:"",route:""})} style={{padding:"4px 10px",borderRadius:6,border:"none",background:BRAND,color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>+ Novo</button>
+          </div>
+          <p style={{fontSize:10,color:"#94A3B8",marginBottom:10,lineHeight:1.5}}>Navios extras que não estão no stand-by. Aparecem no preview junto com os selecionados.</p>
+          {manual.map(v=>{const c=aC(v.carrier);return(
+            <div key={v.id} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",background:"#fff",borderRadius:6,border:"1px solid #F1F5F9",borderLeft:`3px solid ${c}`,marginBottom:4,fontSize:11}}>
+              <span style={{background:c,color:"#fff",padding:"1px 4px",borderRadius:2,fontSize:8,fontWeight:700}}>{v.carrier}</span>
+              <strong style={{flex:1,color:"#1E293B",fontSize:11}}>{v.vessel}</strong>
+              <button onClick={()=>setEditManual(v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11}}>✏️</button>
+              <button onClick={()=>setManual(p=>p.filter(x=>x.id!==v.id))} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:"#DC2626"}}>✕</button>
+            </div>);
+          })}
+          {!manual.length&&<p style={{padding:16,textAlign:"center",color:"#CBD5E1",fontSize:10}}>Nenhum navio manual adicionado</p>}
+        </div>
+      </div>
+
+      {editManual&&<Modal onClose={()=>setEditManual(null)}>
+        <ManualVesselForm initial={editManual} fields={manualFields} onSave={saveManual} onCancel={()=>setEditManual(null)}/>
+      </Modal>}
+    </div>);
+  }
+
+  // ── EMAIL PREVIEW ──
+  if(sub==="email"){
+    return(<div>
+      {SubNav}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <p style={{fontSize:12,color:"#64748B"}}>{totalRows} itens · {Object.keys(grouped).length} rota(s)</p>
+        <button onClick={()=>copyHtml(emailRef)} style={{...bP,background:BRAND,display:"flex",alignItems:"center",gap:6}}>📋 Copiar HTML</button>
+      </div>
+      <div style={{background:"#E2E8F0",padding:20,borderRadius:12}}>
+        <OfertaEmailPreview grouped={grouped} mesRef={mesRef} logo={logo} ref2={emailRef}/>
+      </div>
+    </div>);
+  }
+
+  // ── WHATSAPP PREVIEW ──
+  return(<div>
+    {SubNav}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+      <p style={{fontSize:12,color:"#64748B"}}>{totalRows} itens · {Object.keys(grouped).length} rota(s)</p>
+      <button onClick={()=>copyHtml(whatsRef)} style={{...bP,background:"#7C3AED",display:"flex",alignItems:"center",gap:6}}>📋 Copiar HTML</button>
+    </div>
+    <div style={{background:"#E2E8F0",padding:20,borderRadius:12,display:"flex",justifyContent:"center"}}>
+      <OfertaWhatsPreview grouped={grouped} mesRef={mesRef} logo={logo} ref2={whatsRef}/>
+    </div>
+  </div>);
+}
+
+// ── Manual vessel form (proper component for hooks) ──
+function ManualVesselForm({initial,fields,onSave,onCancel}){
+  const[f,setF]=useState({...initial});
+  return(<>
+    <h2 style={{color:BRAND,fontSize:16,fontWeight:700,marginBottom:12}}>{initial.id?"Editar":"Novo"} Navio Manual</h2>
+    {fields.map(fd=><div key={fd.key} style={{marginBottom:10}}>
+      <label style={lS}>{fd.label}</label>
+      {fd.type==="select"?<select value={f[fd.key]||""} onChange={e=>setF({...f,[fd.key]:e.target.value})} style={selS}>{fd.options.map(o=><option key={o} value={o}>{o}</option>)}</select>
+      :<input type={fd.type||"text"} value={f[fd.key]||""} onChange={e=>setF({...f,[fd.key]:fd.type==="number"?Number(e.target.value):e.target.value})} style={iS}/>}
+    </div>)}
+    <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:16}}>
+      <button onClick={onCancel} style={bG}>Cancelar</button>
+      <button onClick={()=>onSave(f)} style={{...bP,background:BRAND}}>Salvar</button>
+    </div>
+  </>);
+}
+
+// ── Email template ──
+function OfertaEmailPreview({grouped,mesRef,logo,ref2}){
+  const BRD="#0F4C81",SEC="#2980B9",DK="#0A2A42",LT="#E8F0F8";
+  return(<div ref={ref2} style={{background:"#fff",maxWidth:680,margin:"0 auto",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif"}}>
+    <div style={{background:`linear-gradient(135deg,${BRD},${SEC})`,padding:"28px 32px",textAlign:"center"}}>
+      {logo?<img src={logo} alt="Inter Shipping" style={{maxHeight:48,marginBottom:6}}/>:null}
+      <div style={{color:"#fff",fontSize:26,fontWeight:800,fontFamily:"Georgia,serif"}}>Inter <span style={{color:"#7EC8E3"}}>Shipping</span></div>
+      <div style={{color:"rgba(255,255,255,.5)",fontSize:9,letterSpacing:3,marginTop:3}}>ASSESSORIA E LOGÍSTICA INTERNACIONAL</div>
+    </div>
+    <div style={{background:DK,padding:"12px 32px",textAlign:"center"}}>
+      <div style={{color:"#7EC8E3",fontSize:10,fontWeight:600,letterSpacing:2}}>📦 ESPAÇOS GARANTIDOS</div>
+      <div style={{color:"#fff",fontSize:18,fontWeight:700,marginTop:3}}>{mesRef}</div>
+    </div>
+    <div style={{display:"flex",justifyContent:"center",gap:14,padding:"10px 32px",background:LT,borderBottom:"1px solid #e2e8f0"}}>
+      {["Hapag-Lloyd","PIL","COSCO","CMA CGM","MSC","Maersk"].map(a=><div key={a} style={{display:"flex",alignItems:"center",gap:3}}><div style={{width:8,height:8,borderRadius:2,background:aC(a)}}/><span style={{fontSize:9,fontWeight:600,color:"#64748B"}}>{a}</span></div>)}
+    </div>
+    <div style={{padding:"16px 20px"}}>
+      {Object.entries(grouped).map(([route,items])=>(
+        <div key={route} style={{marginBottom:20}}>
+          <div style={{fontSize:13,fontWeight:800,color:BRD,borderBottom:`3px solid ${SEC}`,paddingBottom:5,marginBottom:10}}>🚢 {route}</div>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+            <thead><tr style={{background:BRD}}>
+              {["Armador","Navio","Rota","ETD","DL Draft","DL Carga","Tipo Cntr"].map(h=><th key={h} style={{padding:"7px 5px",color:"#fff",fontWeight:600,fontSize:9,textAlign:"left",letterSpacing:.3}}>{h}</th>)}
+            </tr></thead>
+            <tbody>{items.map((v,i)=>{const c=aC(v.carrier);return(
+              <tr key={i} style={{background:i%2===0?"#fff":LT,borderBottom:"1px solid #edf2f7"}}>
+                <td style={{padding:"7px 5px"}}><span style={{background:c,color:"#fff",padding:"1px 5px",borderRadius:3,fontSize:8,fontWeight:700}}>{v.carrier}</span></td>
+                <td style={{padding:"7px 5px",fontWeight:700,color:BRD}}>{v.vessel}</td>
+                <td style={{padding:"7px 5px",color:"#64748B",fontSize:10}}>{v.pol}→{v.pod}{v.via?` via ${v.via}`:""}</td>
+                <td style={{padding:"7px 5px",fontWeight:700,color:BRD}}>{v.etd}</td>
+                <td style={{padding:"7px 5px",color:c,fontWeight:600,fontSize:10}}>{v.dlDraft||"—"}</td>
+                <td style={{padding:"7px 5px",color:c,fontWeight:600,fontSize:10}}>{v.dlCarga||"—"}</td>
+                <td style={{padding:"7px 5px",fontWeight:700,color:c,textAlign:"center"}}>{v.containers||"—"}</td>
+              </tr>)})}</tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+    <div style={{padding:"0 20px 16px",textAlign:"center"}}>
+      <div style={{background:`linear-gradient(135deg,${LT},#D6EAF8)`,borderRadius:10,padding:"16px 20px",border:`1px solid ${SEC}30`}}>
+        <div style={{fontSize:13,fontWeight:700,color:BRD,marginBottom:4}}>Não deixe de nos consultar!</div>
+        <div style={{fontSize:11,color:"#64748B",lineHeight:1.5}}>Ainda temos espaços para <strong>{mesRef}</strong> nas demais rotas.<br/>Caso tenham cargas em estudo, recomendamos antecipar a consulta.</div>
+      </div>
+    </div>
+    <div style={{background:DK,padding:"16px 32px",textAlign:"center"}}>
+      <div style={{color:"#7EC8E3",fontSize:13,fontWeight:700,fontFamily:"Georgia,serif"}}>Inter Shipping</div>
+      <div style={{color:"rgba(255,255,255,.4)",fontSize:9,marginTop:4}}>Assessoria e Logística Internacional<br/>Ficamos à disposição para avaliar cada operação de forma personalizada.</div>
+    </div>
+  </div>);
+}
+
+// ── WhatsApp template ──
+function OfertaWhatsPreview({grouped,mesRef,logo,ref2}){
+  const BRD="#0F4C81",SEC="#2980B9",DK="#0A2A42",LT="#E8F0F8";
+  return(<div ref={ref2} style={{background:"#fff",width:390,margin:"0 auto",fontFamily:"'Helvetica Neue',Helvetica,Arial,sans-serif",borderRadius:16,overflow:"hidden",boxShadow:"0 4px 24px rgba(0,0,0,.12)"}}>
+    <div style={{background:`linear-gradient(135deg,${BRD},${SEC})`,padding:"22px 18px",textAlign:"center"}}>
+      {logo?<img src={logo} alt="Inter Shipping" style={{maxHeight:36,marginBottom:4}}/>:null}
+      <div style={{color:"#fff",fontSize:20,fontWeight:800,fontFamily:"Georgia,serif"}}>Inter <span style={{color:"#7EC8E3"}}>Shipping</span></div>
+      <div style={{color:"rgba(255,255,255,.4)",fontSize:7,letterSpacing:2,marginTop:2}}>ASSESSORIA E LOGÍSTICA INTERNACIONAL</div>
+      <div style={{marginTop:10,background:"rgba(255,255,255,.15)",borderRadius:10,padding:"8px 14px"}}>
+        <div style={{color:"#7EC8E3",fontSize:8,fontWeight:600,letterSpacing:1.5}}>📦 ESPAÇOS GARANTIDOS</div>
+        <div style={{color:"#fff",fontSize:16,fontWeight:800,marginTop:2}}>{mesRef}</div>
+      </div>
+    </div>
+    <div style={{display:"flex",justifyContent:"center",gap:8,padding:"8px 14px",background:LT}}>
+      {["Hapag-Lloyd","PIL","COSCO","CMA CGM"].map(a=><div key={a} style={{display:"flex",alignItems:"center",gap:3}}><div style={{width:6,height:6,borderRadius:2,background:aC(a)}}/><span style={{fontSize:8,fontWeight:600,color:"#64748B"}}>{a}</span></div>)}
+    </div>
+    <div style={{padding:"10px 12px"}}>
+      {Object.entries(grouped).map(([route,items])=>(
+        <div key={route} style={{marginBottom:12}}>
+          <div style={{fontSize:11,fontWeight:800,color:BRD,borderLeft:`3px solid ${SEC}`,paddingLeft:7,marginBottom:6}}>🚢 {route}</div>
+          {items.map((v,i)=>{const c=aC(v.carrier);return(
+            <div key={i} style={{background:"#fff",borderRadius:8,border:"1px solid #edf2f7",borderLeft:`3px solid ${c}`,padding:"7px 9px",marginBottom:5,fontSize:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><span style={{background:c,color:"#fff",padding:"1px 4px",borderRadius:3,fontSize:7,fontWeight:700,marginRight:3}}>{v.carrier}</span><strong style={{color:BRD,fontSize:11}}>{v.vessel}</strong></div>
+                <span style={{fontWeight:800,color:c,fontSize:9}}>{v.containers||""}</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:4,color:"#64748B",fontSize:9}}>
+                <span>{v.pol}→{v.pod}{v.transit?` · ${v.transit}`:""}</span>
+                <span style={{fontWeight:700,color:BRD}}>ETD {v.etd}</span>
+              </div>
+              {(v.dlDraft||v.dlCarga)&&<div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:8}}>
+                {v.dlDraft&&<span style={{color:c}}>Draft: {v.dlDraft}</span>}
+                {v.dlCarga&&<span style={{color:c}}>Carga: {v.dlCarga}</span>}
+              </div>}
+            </div>);})}
+        </div>
+      ))}
+    </div>
+    <div style={{padding:"0 12px 12px"}}>
+      <div style={{background:`linear-gradient(135deg,${LT},#D6EAF8)`,borderRadius:10,padding:"12px 14px",textAlign:"center",border:`1px solid ${SEC}30`}}>
+        <div style={{fontSize:11,fontWeight:700,color:BRD}}>💬 Consulte-nos!</div>
+        <div style={{fontSize:9,color:"#64748B",marginTop:3}}>Espaços para {mesRef} nas demais rotas.</div>
+      </div>
+    </div>
+    <div style={{background:DK,padding:"12px 18px",textAlign:"center"}}>
+      <div style={{color:"#7EC8E3",fontSize:11,fontWeight:700,fontFamily:"Georgia,serif"}}>Inter Shipping</div>
+      <div style={{color:"rgba(255,255,255,.35)",fontSize:8,marginTop:2}}>Assessoria e Logística Internacional</div>
+    </div>
+  </div>);
+}
+
+// ═════════════════════════════════════════════
 // BACKUP RECOVERY — rede de segurança local
 // ═════════════════════════════════════════════
 function BackupRecovery({onClose,onRestore}){
@@ -1674,6 +1995,7 @@ export default function App(){
         {tab==="bookings"&&<BookingsPanel data={bookings} setData={setBookings} armadores={armadores} user={user}/>}
         {tab==="pendencias"&&<PendenciasPanel data={pendencias} setData={setPendencias} user={user} armadores={armadores}/>}
         {tab==="standby"&&<StandbyPanel ships={ships} setShips={setShips} solicitacoes={solicitacoes} setSolicitacoes={setSolicitacoes} armadores={armadores} setArmadores={setArmadoresWrapped} user={user}/>}
+        {tab==="oferta"&&<OfertaPanel ships={ships} armadores={armadores} logo={logo}/>}
         {tab==="lixeira"&&<LixeiraPanel data={bookings} setData={setBookings}/>}
       </div>
       {showUsers&&<UserManager users={users} onSave={l=>{setUsersWrapped(l);setShowUsers(false)}} onClose={()=>setShowUsers(false)}/>}
