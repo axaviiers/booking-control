@@ -1162,7 +1162,7 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
 
   const delShip=id=>{if(window.confirm("Excluir este navio e todos os bookings?"))setShips(prev=>A(prev).map(s=>s.id===id?{...s,_purged:true,deletedAt:Date.now(),updatedAt:Date.now()}:s))};
   const delBkg=(shipId,bkgId)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).map(b=>b.id===bkgId?{...b,_purged:true,deletedAt:Date.now(),updatedAt:Date.now()}:b),updatedAt:Date.now()}:s));
-  const updBkg=(shipId,updatedBkg)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,bookings:(s.bookings||[]).map(b=>b.id===updatedBkg.id?{...b,...updatedBkg}:b)}:s));
+  const updBkg=(shipId,updatedBkg)=>setShips(prev=>A(prev).map(s=>s.id===shipId?{...s,updatedAt:Date.now(),bookings:(s.bookings||[]).map(b=>b.id===updatedBkg.id?{...b,...updatedBkg,updatedAt:Date.now()}:b)}:s));
 
   const totNavios=activeShips.length;const totBkgs=activeShips.reduce((a,s)=>a+((s.bookings||[]).filter(b=>!b._purged)).length,0);
   const armBkgs=armShips.reduce((a,s)=>a+(s.bookings||[]).length,0);
@@ -1330,8 +1330,8 @@ function StandbyPanel({ships,setShips,solicitacoes,setSolicitacoes,armadores,set
 
     {armsEmpty.length>0&&<p style={{color:"#CBD5E1",fontSize:10,textAlign:"center",marginTop:10}}>Sem navios: {armsEmpty.join(", ")}</p>}
     {showNew&&<ShipModal onClose={()=>setShowNew(false)} onSave={f=>{setShips(prev=>[{id:`NV-${Date.now()}`,bookings:[],...f,createdBy:user.name,createdAt:Date.now()},...prev]);setShowNew(false)}} armadores={armadores} onAddArmador={addArmador}/>}
-    {editShip&&<ShipModal onClose={()=>setEditShip(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===editShip.id?{...s,...f}:s));setEditShip(null)}} armadores={armadores} initial={editShip} onAddArmador={addArmador}/>}
-    {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===addBkgTo.id?{...s,bookings:[...s.bookings,{id:`SBK-${Date.now()}`,createdAt:Date.now(),...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo} armadores={armadores}/>}
+    {editShip&&<ShipModal onClose={()=>setEditShip(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===editShip.id?{...s,...f,updatedAt:Date.now()}:s));setEditShip(null)}} armadores={armadores} initial={editShip} onAddArmador={addArmador}/>}
+    {addBkgTo&&<AddShipBookingModal onClose={()=>setAddBkgTo(null)} onSave={f=>{setShips(prev=>A(prev).map(s=>s.id===addBkgTo.id?{...s,updatedAt:Date.now(),bookings:[...s.bookings,{id:`SBK-${Date.now()}`,createdAt:Date.now(),updatedAt:Date.now(),...f}]}:s));setAddBkgTo(null)}} ship={addBkgTo} armadores={armadores}/>}
     {editBkg&&editBkgShip&&<EditShipBookingModal onClose={()=>{setEditBkg(null);setEditBkgShip(null)}} onSave={f=>{updBkg(editBkgShip.id,f);setEditBkg(null);setEditBkgShip(null)}} ship={editBkgShip} booking={editBkg} armadores={armadores}/>}
   </div>);
 }
@@ -1899,6 +1899,8 @@ export default function App(){
         if(u.length)setUsers(u);
         if(data.armadores?.length)setArmadores(data.armadores);
         if(data.logo!==undefined)setLogo(data.logo);
+        // Guarda contagens de referência para o guard de perda de dados
+        lastGoodCountsRef.current={bk:(data.bookings||[]).length,pd:(data.pendencias||[]).length,sh:(data.ships||[]).length,sl:(data.solicitacoes||[]).length};
       }
     }else{
       if(local){
@@ -1917,10 +1919,11 @@ export default function App(){
   })()},[]);
 
   // ══════════════════════════════════════════
-  // AUTO-SAVE — único mecanismo de salvamento
-  // Roda TODA VEZ que qualquer dado muda.
-  // SEMPRE salva local. Só pula Supabase quando skipSaveRef=true.
   // ══════════════════════════════════════════
+  // AUTO-SAVE — com guarda contra perda de dados
+  // ══════════════════════════════════════════
+  const lastGoodCountsRef=useRef(null); // contagens do último load/save bem-sucedido
+
   useEffect(()=>{
     if(!loaded)return;
 
@@ -1938,7 +1941,24 @@ export default function App(){
     // 3. Pula Supabase se estamos aplicando dados remotos (evita eco)
     if(skipSaveRef.current)return;
 
-    // 4. Salva no Supabase com debounce de 500ms
+    // 4. GUARDA: nunca salva estado vazio se Supabase tinha dados
+    const counts={bk:bookings.length,pd:pendencias.length,sh:ships.length,sl:solicitacoes.length};
+    const prev=lastGoodCountsRef.current;
+    if(prev){
+      const lost=[];
+      if(prev.bk>2&&counts.bk===0)lost.push(`bookings: ${prev.bk}→0`);
+      if(prev.pd>2&&counts.pd===0)lost.push(`pendências: ${prev.pd}→0`);
+      if(prev.sh>2&&counts.sh===0)lost.push(`navios: ${prev.sh}→0`);
+      if(prev.sl>2&&counts.sl===0)lost.push(`solicitações: ${prev.sl}→0`);
+      if(lost.length){
+        console.error("🚨 BLOQUEADO: save apagaria dados!",lost.join(", "));
+        setSaveStatus("error");
+        setDbError("⚠ Save bloqueado: estado local vazio mas Supabase tinha dados ("+lost.join(", ")+"). Recarregue a página.");
+        return; // NÃO salva
+      }
+    }
+
+    // 5. Salva no Supabase com debounce de 500ms
     if(supabase&&user){
       if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
       saveTimerRef.current=setTimeout(async()=>{
@@ -1949,13 +1969,13 @@ export default function App(){
             setSaveStatus("ok");
             setLastSavedAt(Date.now());
             setDbError(null);
+            lastGoodCountsRef.current=counts; // atualiza contagens de referência
           }else{
             setSaveStatus("error");
             setDbError("Falha: "+(res?.reason||"?"));
-            // Retry em 5s
             saveTimerRef.current=setTimeout(async()=>{
               const r2=await saveState(state,user.name);
-              if(r2?.ok){setSaveStatus("ok");setLastSavedAt(Date.now());setDbError(null)}
+              if(r2?.ok){setSaveStatus("ok");setLastSavedAt(Date.now());setDbError(null);lastGoodCountsRef.current=counts}
             },5000);
           }
         }catch(e){
@@ -1967,29 +1987,62 @@ export default function App(){
   },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,user,loaded]);
 
   // ══════════════════════════════════════════
-  // REALTIME — escuta mudanças de outros users
+  // REALTIME — merge profundo em TODAS as coleções
   // ══════════════════════════════════════════
   useEffect(()=>{
     if(!supabase)return;
-    const mergeInto=(prev,next)=>{
+    // Merge profundo para sub-arrays com ID (bookings, tentativas)
+    const mergeSubById=(prev,next)=>{
+      const m=new Map();
+      [...(prev||[]),...(next||[])].forEach(b=>{
+        if(!b?.id)return;
+        const p=m.get(b.id);
+        if(!p){m.set(b.id,b);return}
+        if((b._purged||b.deletedAt)&&!(p._purged||p.deletedAt)){m.set(b.id,b);return}
+        if((p._purged||p.deletedAt)&&!(b._purged||b.deletedAt))return;
+        if((b.updatedAt||b.createdAt||0)>=(p.updatedAt||p.createdAt||0))m.set(b.id,b);
+      });
+      return[...m.values()];
+    };
+    // Merge para comments (sem ID — dedup por text+by+at)
+    const mergeComments=(prev,next)=>{
+      const seen=new Set();
+      const all=[...(prev||[]),...(next||[])];
+      return all.filter(c=>{
+        const k=`${c.text||""}|${c.by||""}|${c.at||""}`;
+        if(seen.has(k))return false;
+        seen.add(k);return true;
+      });
+    };
+    const mergeInto=(prev,next,type)=>{
       if(!next?.length)return prev;
       const m=new Map();
       [...prev,...next].forEach(i=>{
         if(!i?.id)return;
         const p=m.get(i.id);
         if(!p){m.set(i.id,i);return}
-        if((i.updatedAt||i.createdAt||0)>=(p.updatedAt||p.createdAt||0))m.set(i.id,i);
+        const iNewer=(i.updatedAt||i.createdAt||0)>=(p.updatedAt||p.createdAt||0);
+        const winner=iNewer?i:p, loser=iNewer?p:i;
+        if(type==="ships"&&winner.bookings&&loser.bookings){
+          m.set(i.id,{...winner,bookings:mergeSubById(winner.bookings,loser.bookings)});
+        }else if(type==="pendencias"&&(winner.comments||loser.comments)){
+          m.set(i.id,{...winner,comments:mergeComments(winner.comments,loser.comments)});
+        }else if(type==="solicitacoes"&&(winner.tentativas||loser.tentativas)){
+          m.set(i.id,{...winner,tentativas:mergeSubById(winner.tentativas,loser.tentativas)});
+        }else{
+          m.set(i.id,winner);
+        }
       });
       return[...m.values()];
     };
     const unsub=subscribeToChanges((d)=>{
       skipSaveRef.current=true;
-      if(d.bookings)setBookings(p=>mergeInto(p,d.bookings));
-      if(d.ships)setShips(p=>mergeInto(p,d.ships));
-      if(d.pendencias)setPendencias(p=>mergeInto(p,d.pendencias));
-      if(d.solicitacoes)setSolicitacoes(p=>mergeInto(p,d.solicitacoes));
-      // Libera saves após 1s
-      setTimeout(()=>{skipSaveRef.current=false},1000);
+      if(d.bookings)setBookings(p=>mergeInto(p,d.bookings,"bookings"));
+      if(d.ships)setShips(p=>mergeInto(p,d.ships,"ships"));
+      if(d.pendencias)setPendencias(p=>mergeInto(p,d.pendencias,"pendencias"));
+      if(d.solicitacoes)setSolicitacoes(p=>mergeInto(p,d.solicitacoes,"solicitacoes"));
+      // Libera saves após 1.2s e força re-save do estado mergeado
+      setTimeout(()=>{skipSaveRef.current=false;setShips(p=>[...p])},1200);
     });
     return unsub;
   },[]);
