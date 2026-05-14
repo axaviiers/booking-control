@@ -1805,34 +1805,77 @@ function OfertaWhatsPreview({grouped,mesRef,logo,ref2}){
 // ═════════════════════════════════════════════
 // BACKUP RECOVERY — rede de segurança local
 // ═════════════════════════════════════════════
-function BackupRecovery({onClose,onRestore}){
+function BackupRecovery({onClose,onRestore,onMergePendencias,currentCounts}){
   const[list,setList]=useState([]);
   useEffect(()=>{setList(listLocalBackups()||[])},[]);
+
+  // Conta dados reais do state (não do metadata que era incompleto)
+  const realCounts=b=>{
+    if(!b?.state)return{bk:b?.bookings||0,pd:0,sh:b?.ships||0,sl:0};
+    return{
+      bk:(b.state.bookings||[]).filter(x=>!x._purged&&!x._deleted).length,
+      pd:(b.state.pendencias||[]).filter(x=>!x._purged&&!x._deleted&&!x.deletedAt).length,
+      sh:(b.state.ships||[]).filter(x=>!x._purged).length,
+      sl:(b.state.solicitacoes||[]).filter(x=>!x._purged&&!x._deleted).length,
+    };
+  };
+
+  // Encontra backup com mais pendências
+  const bestPd=list.reduce((best,b)=>{
+    const c=realCounts(b);
+    return c.pd>(best?.pd||0)?{pd:c.pd,backup:b}:best;
+  },{pd:0,backup:null});
+
   return(<Modal onClose={onClose} wide>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
       <div>
         <h2 style={{fontSize:17,fontWeight:700}}>💾 Recuperação de Backups</h2>
-        <p style={{color:"#94A3B8",fontSize:12,marginTop:4}}>Snapshots locais automáticos — use se notar dados sumindo</p>
+        <p style={{color:"#94A3B8",fontSize:12,marginTop:4}}>Snapshots locais automáticos — selecione para restaurar</p>
       </div>
       <button onClick={onClose} style={{background:"none",border:"none",color:"#94A3B8",fontSize:18,cursor:"pointer"}}>✕</button>
     </div>
-    <div style={{padding:12,borderRadius:8,background:"#FEF3C7",border:"1px solid #FDE68A",marginBottom:16}}>
-      <p style={{fontSize:11,color:"#92400E"}}><strong>ℹ️ Como funciona:</strong> O sistema guarda automaticamente os 10 snapshots mais recentes no seu navegador. Se você perceber que dados sumiram, pode restaurar um snapshot anterior aqui. Ao restaurar, o estado atual também é salvo como backup (você pode desfazer).</p>
+
+    {/* Status atual */}
+    <div style={{padding:12,borderRadius:8,background:"#F0F9FF",border:"1px solid #BAE6FD",marginBottom:12}}>
+      <p style={{fontSize:11,fontWeight:700,color:"#0369A1",marginBottom:4}}>📊 Estado atual no sistema:</p>
+      <p style={{fontSize:12,color:"#0C4A6E"}}>
+        📦 {currentCounts?.bk||0} bookings · ⚠️ {currentCounts?.pd||0} pendências · 🚢 {currentCounts?.sh||0} navios · 📋 {currentCounts?.sl||0} solicitações
+      </p>
     </div>
-    {list.length===0?<div style={{padding:40,textAlign:"center",color:"#94A3B8",fontSize:13}}>Nenhum backup disponível ainda.<br/><span style={{fontSize:11}}>Os backups são criados automaticamente enquanto você usa o sistema.</span></div>:
+
+    {/* Alerta se pendências sumiram e backup tem mais */}
+    {bestPd.pd>0&&bestPd.pd>(currentCounts?.pd||0)&&<div style={{padding:12,borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA",marginBottom:12}}>
+      <p style={{fontSize:11,fontWeight:700,color:"#DC2626",marginBottom:6}}>🚨 Encontrado backup com {bestPd.pd} pendências (atual: {currentCounts?.pd||0})</p>
+      <p style={{fontSize:10,color:"#7F1D1D",marginBottom:8}}>
+        Backup de {new Date(bestPd.backup.at).toLocaleString("pt-BR")} tem mais pendências que o estado atual. Você pode recuperar APENAS as pendências desse backup sem afetar o resto.
+      </p>
+      <button onClick={()=>onMergePendencias(bestPd.backup.state)} style={{padding:"8px 16px",borderRadius:6,border:"none",background:"#DC2626",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>♻️ Recuperar {bestPd.pd} pendências (merge — não apaga nada)</button>
+    </div>}
+
+    <div style={{padding:12,borderRadius:8,background:"#FEF3C7",border:"1px solid #FDE68A",marginBottom:16}}>
+      <p style={{fontSize:11,color:"#92400E"}}><strong>ℹ️</strong> Cada membro da equipe tem backups no SEU navegador. Se dados sumiram, peça para cada um abrir esta tela e verificar.</p>
+    </div>
+
+    {list.length===0?<div style={{padding:40,textAlign:"center",color:"#94A3B8",fontSize:13}}>Nenhum backup disponível neste navegador.</div>:
     <div style={{maxHeight:400,overflowY:"auto"}}>
-      {list.map((b,i)=><div key={i} style={{padding:"12px 14px",borderRadius:8,background:i===0?"#F0FDF4":"#F8FAFC",border:`1px solid ${i===0?"#BBF7D0":"#E2E8F0"}`,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div>
-          <p style={{fontSize:12,fontWeight:700,color:i===0?"#047857":"#1E293B"}}>
-            {i===0&&"🟢 "}{new Date(b.at).toLocaleString("pt-BR")}
-            {i===0&&<span style={{marginLeft:6,fontSize:9,color:"#047857"}}>(mais recente)</span>}
-          </p>
-          <p style={{fontSize:10,color:"#64748B",marginTop:3}}>
-            📦 {b.bookings||0} bookings · ⚠️ {b.pendencias||0} pendências · 🚢 {b.ships||0} navios
-          </p>
-        </div>
-        <button onClick={()=>onRestore(b.state)} style={{padding:"6px 14px",borderRadius:6,border:"1px solid #BFDBFE",background:"#DBEAFE",color:"#1D4ED8",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>♻️ Restaurar</button>
-      </div>)}
+      {list.map((b,i)=>{const c=realCounts(b);const hasMissing=c.pd>(currentCounts?.pd||0)||c.bk>(currentCounts?.bk||0)||c.sh>(currentCounts?.sh||0);return(
+        <div key={i} style={{padding:"12px 14px",borderRadius:8,background:hasMissing?"#FFF7ED":i===0?"#F0FDF4":"#F8FAFC",border:`1px solid ${hasMissing?"#FED7AA":i===0?"#BBF7D0":"#E2E8F0"}`,marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <p style={{fontSize:12,fontWeight:700,color:hasMissing?"#C2410C":i===0?"#047857":"#1E293B"}}>
+                {hasMissing?"⚠️ ":"🕐 "}{new Date(b.at).toLocaleString("pt-BR")}
+                {hasMissing&&<span style={{marginLeft:6,fontSize:9,color:"#C2410C"}}>(tem dados faltando!)</span>}
+              </p>
+              <p style={{fontSize:10,color:"#64748B",marginTop:3}}>
+                📦 {c.bk} bk · ⚠️ <strong style={{color:c.pd>(currentCounts?.pd||0)?"#DC2626":"inherit"}}>{c.pd} pd</strong> · 🚢 {c.sh} sh · 📋 {c.sl} sl
+              </p>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              {c.pd>(currentCounts?.pd||0)&&<button onClick={()=>onMergePendencias(b.state)} style={{padding:"5px 10px",borderRadius:6,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>♻️ Só pendências</button>}
+              <button onClick={()=>onRestore(b.state)} style={{padding:"5px 10px",borderRadius:6,border:"1px solid #BFDBFE",background:"#DBEAFE",color:"#1D4ED8",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>♻️ Tudo</button>
+            </div>
+          </div>
+        </div>);})}
     </div>}
     <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}>
       <button onClick={onClose} style={bG}>Fechar</button>
@@ -2200,9 +2243,26 @@ export default function App(){
       {showUsers&&<UserManager users={users} onSave={l=>{setUsersWrapped(l);setShowUsers(false)}} onClose={()=>setShowUsers(false)}/>}
       {showArm&&<ArmadorManager armadores={armadores} onSave={l=>{setArmadoresWrapped(l);setShowArm(false)}} onClose={()=>setShowArm(false)}/>}
       {showLogo&&<LogoManager logo={logo} onSave={l=>{setLogoWrapped(l);setShowLogo(false)}} onClose={()=>setShowLogo(false)}/>}
-      {showBackups&&<BackupRecovery onClose={()=>setShowBackups(false)} onRestore={(s)=>{
+      {showBackups&&<BackupRecovery onClose={()=>setShowBackups(false)} 
+        currentCounts={{bk:bookings.filter(x=>!x._purged&&!x._deleted).length,pd:pendencias.filter(x=>!x._purged&&!x._deleted&&!x.deletedAt).length,sh:ships.filter(x=>!x._purged).length,sl:solicitacoes.filter(x=>!x._purged&&!x._deleted).length}}
+        onMergePendencias={(s)=>{
+          if(!s?.pendencias?.length){alert("Sem pendências nesse backup.");return}
+          if(!window.confirm(`Recuperar ${s.pendencias.filter(x=>!x._purged&&!x._deleted&&!x.deletedAt).length} pendências do backup? Isso FAZ MERGE — não apaga pendências atuais, só adiciona as que faltam.`))return;
+          pushLocalBackup({bookings,pendencias,ships,solicitacoes,users,armadores,logo});
+          setPendencias(prev=>{
+            const m=new Map();
+            [...prev,...(s.pendencias||[])].forEach(p=>{
+              if(!p?.id)return;
+              const existing=m.get(p.id);
+              if(!existing){m.set(p.id,p);return}
+              if((p.updatedAt||p.createdAt||0)>=(existing.updatedAt||existing.createdAt||0))m.set(p.id,p);
+            });
+            return[...m.values()];
+          });
+          alert("Pendências recuperadas! Verifique a aba Pendências.");
+        }}
+        onRestore={(s)=>{
         if(!window.confirm("Restaurar este backup? O estado atual será substituído (uma cópia de segurança do estado atual é feita automaticamente)."))return;
-        // Salva snapshot do estado atual antes de restaurar
         pushLocalBackup({bookings,pendencias,ships,solicitacoes,users,armadores,logo});
         if(s.bookings)setBookings(s.bookings);
         if(s.pendencias)setPendencias(s.pendencias);
@@ -2211,6 +2271,7 @@ export default function App(){
         if(s.users?.length)setUsersWrapped(s.users);
         if(s.armadores?.length)setArmadoresWrapped(s.armadores);
         if(s.logo!==undefined)setLogoWrapped(s.logo);
+        lastGoodCountsRef.current={bk:(s.bookings||[]).length,pd:(s.pendencias||[]).length,sh:(s.ships||[]).length,sl:(s.solicitacoes||[]).length};
         setTimeout(()=>{setShowBackups(false);alert("Backup restaurado. As alterações serão sincronizadas em instantes.")},100);
       }}/>}
     </div>
