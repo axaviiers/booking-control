@@ -7,10 +7,12 @@ const RU_PORTS=["saint petersburg","st petersburg","st. petersburg","novorossiys
 const isRuPort=r=>{try{const p=((r?.pol||"")+(r?.pod||"")).toLowerCase();return RU_PORTS.some(rp=>p.includes(rp))}catch{return false}};
 const getSLA=r=>isRuPort(r)?24*3600000:2*3600000;
 const ST={
+  "A Solicitar":{c:"#6B7280",bg:"#F3F4F6",bd:"#D1D5DB",i:"📝"},
   Solicitado:{c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A",i:"⏳"},
   "Precisando de estratégia":{c:"#1D4ED8",bg:"#DBEAFE",bd:"#BFDBFE",i:"🧠"},
   "Aguardando contrato":{c:"#7C3AED",bg:"#EDE9FE",bd:"#DDD6FE",i:"📄"},
   Aprovado:{c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0",i:"✅"},
+  "Em processo de ajuste":{c:"#D97706",bg:"#FFFBEB",bd:"#FDE68A",i:"🔧"},
   Cancelado:{c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA",i:"🚫"},
   "Enviado ao cliente":{c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD",i:"📤"},
   "Em processo de transferência":{c:"#9333EA",bg:"#F3E8FF",bd:"#E9D5FF",i:"🔄"},
@@ -619,12 +621,12 @@ function BookingsPanel({data,setData,armadores,user}){
   const updReq=(id,fields)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,...fields,updatedAt:Date.now()}:r));setSel(prev=>prev?{...prev,...fields}:prev)};
   const delReq=id=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:Date.now(),deletedBy:user.name}:r));setSel(null)};
   return(<div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:16}}>
-      {[{l:"Total",v:activeNoEnv.length,c:"#475569",bg:"#F8FAFC",bd:"#E2E8F0"},{l:"Solicitado",v:activeNoEnv.filter(r=>r.status==="Solicitado").length,c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A"},{l:"Urgentes",v:urgC,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"},{l:"Aprovado",v:activeNoEnv.filter(r=>r.status==="Aprovado").length,c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0"},{l:"Enviado ao cliente",v:envCount,c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD"},{l:"Cancelado",v:activeNoEnv.filter(r=>r.status==="Cancelado").length,c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA"},{l:"Escalonado",v:escC,c:escC?"#DC2626":"#94A3B8",bg:escC?"#FEF2F2":"#F8FAFC",bd:escC?"#FECACA":"#E2E8F0"}].map((s,i)=>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(90px,1fr))",gap:6,marginBottom:16}}>
+      {[{l:"Total",v:activeNoEnv.length,c:"#475569",bg:"#F8FAFC",bd:"#E2E8F0"},{l:"A Solicitar",v:activeNoEnv.filter(r=>r.status==="A Solicitar").length,c:"#6B7280",bg:"#F3F4F6",bd:"#D1D5DB"},{l:"Solicitado",v:activeNoEnv.filter(r=>r.status==="Solicitado").length,c:"#B45309",bg:"#FEF3C7",bd:"#FDE68A"},{l:"Urgentes",v:urgC,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"},{l:"Aprovado",v:activeNoEnv.filter(r=>r.status==="Aprovado").length,c:"#047857",bg:"#D1FAE5",bd:"#A7F3D0"},{l:"Em processo de ajuste",v:activeNoEnv.filter(r=>r.status==="Em processo de ajuste").length,c:"#D97706",bg:"#FFFBEB",bd:"#FDE68A"},{l:"Enviado ao cliente",v:envCount,c:"#0369A1",bg:"#E0F2FE",bd:"#BAE6FD"},{l:"Cancelado",v:activeNoEnv.filter(r=>r.status==="Cancelado").length,c:"#DC2626",bg:"#FEE2E2",bd:"#FECACA"},{l:"Escalonado",v:escC,c:escC?"#DC2626":"#94A3B8",bg:escC?"#FEF2F2":"#F8FAFC",bd:escC?"#FECACA":"#E2E8F0"}].map((s,i)=>
         <div key={i} onClick={()=>setFilter(s.l==="Total"?"Todos":s.l==="Escalonado"?"Escalonados":s.l)} style={{padding:"10px 6px",borderRadius:10,background:s.bg,border:`1px solid ${s.bd}`,textAlign:"center",cursor:"pointer",transition:"transform .15s"}} onMouseOver={e=>e.currentTarget.style.transform="translateY(-2px)"} onMouseOut={e=>e.currentTarget.style.transform="none"}><p style={{fontSize:18,fontWeight:700,color:s.c}}>{s.v}</p><p style={{color:"#94A3B8",fontSize:7,fontWeight:600,textTransform:"uppercase"}}>{s.l}</p></div>)}
     </div>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>{["Todos","Solicitado","Precisando de estratégia","Aguardando contrato","Urgentes","Aprovado","Em processo de transferência","Enviado ao cliente","Cancelado","Escalonados"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"4px 8px",borderRadius:6,border:filter===f?"none":"1px solid #E2E8F0",background:filter===f?BRAND_LT:"#fff",color:filter===f?BRAND:"#64748B",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{f}</button>)}</div>
+      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>{["Todos","A Solicitar","Solicitado","Precisando de estratégia","Aguardando contrato","Urgentes","Aprovado","Em processo de ajuste","Em processo de transferência","Enviado ao cliente","Cancelado","Escalonados"].map(f=><button key={f} onClick={()=>setFilter(f)} style={{padding:"4px 8px",borderRadius:6,border:filter===f?"none":"1px solid #E2E8F0",background:filter===f?BRAND_LT:"#fff",color:filter===f?BRAND:"#64748B",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{f}</button>)}</div>
       <div style={{display:"flex",gap:6}}>
         <button onClick={()=>{
           const list=active.filter(r=>r.status!=="Cancelado");
@@ -763,35 +765,74 @@ function PendenciasPanel({data,setData,user,armadores=[]}){
     return <span style={{display:"inline-flex",alignItems:"center",gap:3,padding:"2px 8px",borderRadius:20,background:cfg.bg,border:`1px solid ${cfg.border}`,fontSize:9,fontWeight:700,color:cfg.color}}>{cfg.icon} {cfg.label}</span>;
   };
 
+  const[cmtType,setCmtType]=useState("Comentário");
+  const CMT_TYPES=["Comentário","Negociação","Retorno do armador","Comentário interno"];
+  const fmtAgo=(ts)=>{if(!ts)return"";const d=Date.now()-ts;if(d<60000)return"agora";if(d<3600000)return`há ${Math.floor(d/60000)}min`;if(d<86400000)return`há ${Math.floor(d/3600000)}h`;return`há ${Math.floor(d/86400000)}d`};
+
   const renderItem=(p)=>{
     const cfg=getPrio(p);
+    const isOpen=selP===p.id;
+    const comments=A(p.comments);
     return(
-    <div key={p.id} style={{padding:"12px 16px",borderBottom:"1px solid #F1F5F9",borderLeft:`4px solid ${cfg.barColor}`,transition:"background .15s"}} onMouseEnter={e=>e.currentTarget.style.background="#FAFBFC"} onMouseLeave={e=>e.currentTarget.style.background=""}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-        <div style={{flex:1}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-            {renderPrioTag(p)}
-            {p.armador&&<span style={{fontSize:9,fontWeight:600,color:"#64748B",background:"#F1F5F9",padding:"2px 8px",borderRadius:20}}>⚓ {p.armador}</span>}
+    <div key={p.id} style={{borderBottom:"1px solid #F1F5F9",borderLeft:`4px solid ${cfg.barColor}`}}>
+      {/* Header row */}
+      <div style={{padding:"12px 16px",cursor:"pointer",transition:"background .15s"}} onClick={()=>setSelP(isOpen?null:p.id)} onMouseEnter={e=>e.currentTarget.style.background="#FAFBFC"} onMouseLeave={e=>e.currentTarget.style.background=""}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+              {renderPrioTag(p)}
+              {p.armador&&<span style={{fontSize:9,fontWeight:600,color:"#64748B",background:"#F1F5F9",padding:"2px 8px",borderRadius:20}}>⚓ {p.armador}</span>}
+              {comments.length>0&&<span style={{fontSize:9,color:"#94A3B8"}}>💬 {comments.length}</span>}
+            </div>
+            <p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:cfg.color}}>{p.bookingNumber}</span></p>
+            <p style={{fontSize:12,color:"#475569",marginTop:3,lineHeight:1.4}}>{p.observation}</p>
+            <p style={{fontSize:9,color:"#94A3B8",marginTop:4}}>{p.createdBy} · {fDt(p.createdAt)}</p>
           </div>
-          <p style={{fontSize:13,fontWeight:600}}>BKG: <span style={{color:cfg.color}}>{p.bookingNumber}</span></p>
-          <p style={{fontSize:12,color:"#475569",marginTop:3,lineHeight:1.4}}>{p.observation}</p>
-          <p style={{fontSize:9,color:"#94A3B8",marginTop:4}}>{p.createdBy} · {fDt(p.createdAt)}</p>
-          {A(p.comments).map((c,i)=><div key={i} style={{padding:"5px 10px",borderRadius:6,background:"#FFFBEB",marginTop:4,borderLeft:"3px solid #FDE68A"}}>
-            <p style={{fontSize:11,color:"#1E293B"}}>{c.text}</p>
-            <p style={{fontSize:8,color:"#94A3B8",marginTop:1}}>{c.by} · {fDt(c.at)}</p>
-          </div>)}
-          {selP===p.id&&<div style={{display:"flex",gap:4,marginTop:6}}>
-            <input value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="Comentário..." style={{...iS,flex:1,padding:"6px 10px",fontSize:11}} onKeyDown={e=>{if(e.key==="Enter"&&cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}],updatedAt:Date.now()}:x));setCmt("")}}}/>
-            <button onClick={()=>{if(cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[...A(x.comments),{text:cmt.trim(),by:user.name,at:Date.now()}],updatedAt:Date.now()}:x));setCmt("")}}} style={{...bP,padding:"5px 10px",fontSize:10}}>+</button>
-          </div>}
-        </div>
-        <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
-          <button onClick={()=>setSelP(selP===p.id?null:p.id)} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #E2E8F0",background:"#fff",color:"#64748B",fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Comentar">💬</button>
-          <button onClick={()=>setEditP(p)} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #E2E8F0",background:"#fff",color:BRAND,fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Editar">✏️</button>
-          <button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:true,resolvedAt:Date.now(),resolvedBy:user.name,updatedAt:Date.now()}:x))} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}} title="Resolver">✓</button>
-          <button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true,updatedAt:Date.now()}:x))}} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Excluir">🗑</button>
+          <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+            <button onClick={()=>setEditP(p)} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #E2E8F0",background:"#fff",color:BRAND,fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Editar">✏️</button>
+            <button onClick={()=>setData(prev=>A(prev).map(x=>x.id===p.id?{...x,resolved:true,resolvedAt:Date.now(),resolvedBy:user.name,updatedAt:Date.now()}:x))} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #A7F3D0",background:"#D1FAE5",color:"#047857",fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}} title="Resolver">✓</button>
+            <button onClick={()=>{if(window.confirm("Excluir?"))setData(prev=>A(prev).map(x=>x.id===p.id?{...x,_deleted:true,updatedAt:Date.now()}:x))}} style={{padding:"4px 8px",borderRadius:6,border:"1px solid #FECACA",background:"#FEF2F2",color:"#DC2626",fontSize:9,cursor:"pointer",fontFamily:"inherit"}} title="Excluir">🗑</button>
+            <span style={{fontSize:14,color:"#94A3B8",cursor:"pointer",transform:isOpen?"rotate(180deg)":"none",transition:"transform .2s",display:"inline-block"}}>▾</span>
+          </div>
         </div>
       </div>
+
+      {/* Expanded: Thread de atualizações (estilo chat) */}
+      {isOpen&&<div style={{padding:"0 16px 16px",borderTop:"1px solid #F1F5F9"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12,marginBottom:12}}>
+          <p style={{fontSize:12,fontWeight:700,color:"#1E293B",letterSpacing:"0.3px"}}>ATUALIZAÇÕES DA EQUIPE</p>
+        </div>
+
+        {/* Input area */}
+        <div style={{marginBottom:16}}>
+          <select value={cmtType} onChange={e=>setCmtType(e.target.value)} style={{...selS,width:"auto",padding:"6px 12px",fontSize:11,marginBottom:8,borderRadius:8}}>
+            {CMT_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+          </select>
+          <textarea value={cmt} onChange={e=>setCmt(e.target.value)} placeholder="Adicione uma atualização (negociação, retorno do armador, comentário interno...)" style={{...iS,width:"100%",minHeight:70,resize:"vertical",fontSize:12,lineHeight:1.5,padding:"10px 14px"}}/>
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+            <button onClick={()=>{if(cmt.trim()){setData(prev=>A(prev).map(x=>x.id===p.id?{...x,comments:[{text:cmt.trim(),by:user.name,at:Date.now(),type:cmtType},...A(x.comments)],updatedAt:Date.now()}:x));setCmt("")}}} style={{...bP,padding:"8px 20px",fontSize:12,display:"flex",alignItems:"center",gap:6}}>✈ Adicionar</button>
+          </div>
+        </div>
+
+        {/* Comments thread */}
+        {comments.length>0?<div style={{display:"flex",flexDirection:"column",gap:0}}>
+          {comments.slice().sort((a,b)=>(b.at||0)-(a.at||0)).map((c,i)=><div key={i} style={{padding:"14px 0",borderTop:i>0?"1px solid #F1F5F9":"none"}}>
+            <div style={{display:"flex",gap:10}}>
+              <div style={{width:36,height:36,borderRadius:"50%",background:"#EFF6FF",border:"1px solid #DBEAFE",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <span style={{fontSize:16,color:"#3B82F6"}}>💬</span>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                  <span style={{fontSize:13,fontWeight:700,color:"#1E293B"}}>{c.by||"—"}</span>
+                  <span style={{fontSize:11,color:"#94A3B8"}}>· {c.type||"Comentário"}</span>
+                  <span style={{fontSize:11,color:"#94A3B8"}}>· {fmtAgo(c.at)}</span>
+                </div>
+                <p style={{fontSize:13,color:"#334155",lineHeight:1.5}}>{c.text}</p>
+              </div>
+            </div>
+          </div>)}
+        </div>:<p style={{textAlign:"center",color:"#CBD5E1",fontSize:11,padding:"12px 0"}}>Nenhuma atualização ainda</p>}
+      </div>}
     </div>);
   };
 
