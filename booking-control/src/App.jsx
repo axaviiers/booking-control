@@ -617,7 +617,7 @@ function BookingsPanel({data,setData,armadores,user}){
   const envCount=active.filter(r=>r.status==="Enviado ao cliente").length;
   const filt=filter==="Todos"?activeNoEnv:filter==="Escalonados"?activeNoEnv.filter(isEsc):filter==="Urgentes"?activeNoEnv.filter(isUrg):filter==="Enviado ao cliente"?active.filter(r=>r.status==="Enviado ao cliente"):active.filter(r=>r.status===filter);
   const addReq=f=>{const uid=`BK-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2,5).toUpperCase()}`;setData(prev=>[{id:uid,status:"Solicitado",createdAt:Date.now(),updatedAt:Date.now(),createdBy:user.name,history:[],observations:[],...f},...prev]);setShowNew(false)};
-  const chgSt=(id,s)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,status:s,updatedAt:Date.now(),history:[...r.history,{from:r.status,to:s,at:Date.now(),by:user.name}]}:r));setSel(null)};
+  const chgSt=(id,s)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,status:s,updatedAt:Date.now(),history:[...(r.history||[]),{from:r.status,to:s,at:Date.now(),by:user.name}]}:r));setSel(null)};
   const updReq=(id,fields)=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,...fields,updatedAt:Date.now()}:r));setSel(prev=>prev?{...prev,...fields}:prev)};
   const delReq=id=>{setData(prev=>A(prev).map(r=>r.id===id?{...r,deletedAt:Date.now(),deletedBy:user.name}:r));setSel(null)};
   return(<div>
@@ -1973,18 +1973,36 @@ export default function App(){
       setDbError(null);setOnline(true);
       const remote=await loadState();
       const data=remote||local;
+      // Limpa itens purgados há mais de 7 dias (reduz tamanho do estado)
+      const PURGE_AGE=7*24*3600000;
+      const clean=arr=>(arr||[]).filter(x=>{
+        if(!x._purged&&!x._deleted)return true; // ativo → mantém
+        const delAt=x.deletedAt||x.updatedAt||x.createdAt||0;
+        return(Date.now()-delAt)<PURGE_AGE; // purgado recente → mantém para sync
+      });
+      const cleanShips=arr=>(arr||[]).filter(s=>{
+        if(!s._purged)return true;
+        const delAt=s.deletedAt||s.updatedAt||s.createdAt||0;
+        return(Date.now()-delAt)<PURGE_AGE;
+      }).map(s=>({...s,bookings:clean(s.bookings||[])}));
+
       if(data){
-        if(data.bookings?.length)setBookings(data.bookings);
-        if(data.pendencias?.length)setPendencias(data.pendencias);
-        if(data.ships?.length)setShips((data.ships||[]).map(s=>({...s,bookings:s.bookings||[]})));
-        if(data.solicitacoes?.length)setSolicitacoes(data.solicitacoes);
+        const bk=clean(data.bookings);
+        const pd=clean(data.pendencias);
+        const sh=cleanShips(data.ships);
+        const sl=clean(data.solicitacoes);
+        if(bk.length)setBookings(bk);
+        if(pd.length)setPendencias(pd);
+        if(sh.length)setShips(sh.map(s=>({...s,bookings:s.bookings||[]})));
+        if(sl.length)setSolicitacoes(sl);
         const u=[...(data.users||[])];
         USR_DEF.forEach(def=>{if(!u.find(x=>x.username===def.username))u.push(def)});
         if(u.length)setUsers(u);
         if(data.armadores?.length)setArmadores(data.armadores);
         if(data.logo!==undefined)setLogo(data.logo);
-        // Guarda contagens de referência para o guard de perda de dados
-        lastGoodCountsRef.current={bk:(data.bookings||[]).length,pd:(data.pendencias||[]).length,sh:(data.ships||[]).length,sl:(data.solicitacoes||[]).length};
+        lastGoodCountsRef.current={bk:bk.length,pd:pd.length,sh:sh.length,sl:sl.length};
+        const removed=(data.bookings||[]).length-bk.length+(data.pendencias||[]).length-pd.length+(data.ships||[]).length-sh.length+(data.solicitacoes||[]).length-sl.length;
+        if(removed>0)console.log(`🧹 Limpeza: ${removed} itens antigos removidos (purgados há +7 dias)`);
       }
     }else{
       if(local){
@@ -2042,7 +2060,7 @@ export default function App(){
       }
     }
 
-    // 5. Salva no Supabase com debounce de 500ms
+    // 5. Salva no Supabase com debounce de 1.5s (reduz carga na rede)
     if(supabase&&user){
       if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
       saveTimerRef.current=setTimeout(async()=>{
@@ -2066,7 +2084,7 @@ export default function App(){
           setSaveStatus("error");
           setDbError("Erro: "+(e?.message||e));
         }
-      },500);
+      },1500);
     }
   },[bookings,pendencias,ships,solicitacoes,users,armadores,logo,user,loaded]);
 
